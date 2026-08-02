@@ -158,20 +158,24 @@
     box-shadow:0 0 0 3px rgba(192,0,0,.18);animation:onair-pulse 1.6s ease-in-out infinite}
   @keyframes onair-pulse{50%{opacity:.35}}
   #onairText b{color:var(--ink);font-weight:800}
-  #onairClear{background:none;border:none;padding:0;color:var(--dim);text-decoration:underline;
-    text-decoration-color:var(--grid);font-family:inherit;font-size:11px;cursor:pointer}
-  #onairClear:hover{color:var(--red);text-decoration-color:var(--red)}
+  .exit-btn{background:#fff;color:var(--red);border:1px solid var(--red);border-radius:4px;
+    padding:5px 12px;font-family:"Sofia Sans Extra Condensed",sans-serif;font-weight:800;
+    text-transform:uppercase;letter-spacing:.6px;font-size:11.5px;cursor:pointer}
+  .exit-btn:hover{background:var(--red);color:#fff}
 
   /* ---- OBS display view (?display=1) ---- */
   #lowerThirdDisplay{display:none}
   body.display-mode #lowerThirdDisplay{display:block;position:relative;width:1920px;height:1080px}
+  /* always present in the DOM (it's position:absolute, so it never affects layout) — shown/hidden and
+     swapped between players purely via opacity, so bringing it on, taking it off, or switching to a
+     new player all get a smooth fade instead of an instant pop */
   .lt-bar{display:flex;align-items:center;gap:22px;position:absolute;left:0;right:0;bottom:60px;height:200px;
     padding:0 40px;background-color:#0E2340;
     background-image:linear-gradient(#F5F7FA,#F5F7FA),
       repeating-linear-gradient(90deg, rgba(255,255,255,.05) 0 1px, transparent 1px 26px);
     background-repeat:no-repeat,repeat; background-size:100% 5px,auto; background-position:top left,top left;
-    box-sizing:border-box}
-  .lt-bar[hidden]{display:none}
+    box-sizing:border-box; opacity:0; pointer-events:none; transition:opacity .35s ease}
+  .lt-bar.lt-visible{opacity:1}
   .lt-headshot{width:152px;height:152px;border-radius:50%;object-fit:cover;background:#153157;
     border:5px solid #F5F7FA;flex:none}
   .lt-info{flex:none; min-width:0}
@@ -223,7 +227,7 @@
   <div class="onair" id="onair" hidden>
     <span class="onair-dot"></span>
     <span id="onairText"></span>
-    <button id="onairClear" type="button">Clear</button>
+    <button id="onairClear" class="exit-btn" type="button" title="Remove the lower third from OBS">✕ Exit Lower Third</button>
   </div>
 </header>
 <div id="status">Loading…</div>
@@ -246,6 +250,8 @@
         title="Push to OBS and download hitting lower-third PNG">⤓ Download Hitting PNG</button>
       <button id="modalDownloadPit" class="modal-export-btn" type="button" hidden
         title="Push to OBS and download pitching lower-third PNG">⤓ Download Pitching PNG</button>
+      <button id="modalExitOnAir" class="exit-btn" type="button"
+        title="Remove the lower third from OBS">✕ Exit Lower Third</button>
     </div>
     <div id="modalDlNote" class="modal-dlnote"></div>
   </div>
@@ -253,7 +259,7 @@
 
 <!-- OBS Browser Source view: add this same file/URL with ?display=1 as a Browser Source. -->
 <div id="lowerThirdDisplay">
-  <div class="lt-bar" id="ltBar" hidden>
+  <div class="lt-bar" id="ltBar">
     <img id="ltHeadshot" class="lt-headshot" alt="">
     <div class="lt-info">
       <div class="lt-name" id="ltName"></div>
@@ -868,12 +874,14 @@ function autoPushOnAir() {
   }
 }
 
-function renderOnAirBar(payload) {
-  const bar = $('ltBar');
-  if (!bar) return;
-  if (!payload) { bar.hidden = true; return; }
+// matches the CSS transition duration on .lt-bar, so a player-to-player swap fades the old one
+// fully out before the new content is painted and faded back in — never an instant content pop
+const LT_FADE_MS = 350;
+let ltFadeTimer = null;
+let ltVisible = false;
+
+function paintOnAirBar(payload) {
   const { name, pos, team, data } = payload;
-  bar.hidden = false;
   $('ltHeadshot').src = headshotURL(payload.pid);
   $('ltName').textContent = name.toUpperCase();
   $('ltSub').textContent = [pos, team].filter(Boolean).join('  ·  ').toUpperCase();
@@ -885,6 +893,28 @@ function renderOnAirBar(payload) {
   $('ltCells').innerHTML = data.cells.map(([label, value]) =>
     `<div class="lt-cell"><div class="v">${value}</div><div class="k">${label}</div></div>`).join('');
   sizeCells(data.cells.length);
+  $('ltBar').classList.add('lt-visible');
+  ltVisible = true;
+}
+
+function renderOnAirBar(payload) {
+  const bar = $('ltBar');
+  if (!bar) return;
+  clearTimeout(ltFadeTimer);
+
+  if (!payload) {
+    bar.classList.remove('lt-visible');  // fades out via the CSS transition, content stays as-is underneath
+    ltVisible = false;
+    return;
+  }
+
+  if (ltVisible) {
+    // already on screen with someone else — fade that out first, then swap content and fade the new one in
+    bar.classList.remove('lt-visible');
+    ltFadeTimer = setTimeout(() => paintOnAirBar(payload), LT_FADE_MS);
+  } else {
+    paintOnAirBar(payload);
+  }
 }
 
 // Shrinks each stat cell (width + font) to whatever fits the available bar width in one row —
@@ -1009,6 +1039,10 @@ $('openDisplay').onclick = () => {
   window.open(url.href, '_blank');
 };
 $('onairClear').onclick = clearOnAir;
+$('modalExitOnAir').onclick = () => {
+  clearOnAir();
+  $('modalDlNote').textContent = 'Removed from OBS ✓';
+};
 
 const yr = new Date().getFullYear();
 if (isDisplayMode) {
