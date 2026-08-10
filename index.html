@@ -3,17 +3,23 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Trade Snapshot — Talkin' Yanks</title>
+<title>Yankees Series Snapshot</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Anton&family=Sofia+Sans+Extra+Condensed:wght@700;800&family=Sofia+Sans+Semi+Condensed:wght@400;600;800&display=swap" rel="stylesheet">
 <style>
+  /* Scoresheet palette — matches the Google Sheet this replaces: white paper, red labels,
+     yellow/blue alternating game blocks, a gridline on every cell.
+     The broadcast lower-third canvas (renderLowerThird) stays dark on purpose — it goes over video. */
   :root{
     --paper:#fff; --chrome:#F7F7F7; --ink:#1F1F1F; --dim:#6B6B6B;
     --grid:#B7B7B7; --hard:#7F7F7F;
     --red:#C00000; --blue:#1F4E79; --green:#217346;
+    --gA:#FFF2CC; --gAlite:#FFFAEB;      /* game block A — the sheet's yellow */
+    --gB:#DDEBF7; --gBlite:#F2F8FD;      /* game block B — the sheet's blue */
+    --tot:#F2F2F2; --tothead:#F4CCCC;    /* totals block + its pink header */
     --team:#D9D9D9; --sum:#E6E6E6; --sub:#EFEFEF;
-    --navy:#0E2340; --white-accent:#F5F7FA;
+    --pick:#FFE599; --colpick:#CFE2F3;
   }
   *{box-sizing:border-box}
   body{margin:0;color:var(--ink);background:var(--paper);
@@ -26,15 +32,10 @@
   .titlerow{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
   h1{font-family:"Anton",sans-serif;font-style:normal;font-size:34px;margin:0;letter-spacing:.5px}
   h1 span{color:var(--red)}
-  .home-btn{background:#fff;color:var(--red);border:1px solid var(--red);border-radius:999px;
-    padding:6px 14px;font-family:"Sofia Sans Extra Condensed",sans-serif;font-weight:800;
-    text-transform:uppercase;letter-spacing:.6px;font-size:12.5px;cursor:pointer;flex:none}
-  .home-btn:hover{background:var(--red);color:#fff}
-  .teambadge{display:flex;align-items:center;gap:8px}
-  .teambadge img{width:30px;height:30px;border-radius:50%;background:#fff;padding:3px;
+  .matchup{display:flex;align-items:center;gap:8px}
+  .matchup img{width:30px;height:30px;border-radius:50%;background:#fff;padding:3px;
     box-shadow:0 0 0 1px var(--grid);object-fit:contain}
-  .teambadge .tn{font-family:"Sofia Sans Extra Condensed",sans-serif;font-weight:800;
-    text-transform:uppercase;letter-spacing:.4px;color:var(--dim);font-size:13px}
+  .matchup .x{color:var(--dim);font-weight:800;font-size:13px}
   .datanote{position:absolute;top:14px;right:20px;font-family:"Sofia Sans Extra Condensed",sans-serif;
     font-size:11px;letter-spacing:.4px;color:var(--dim);background:#fff;border:1px solid var(--grid);
     border-radius:4px;padding:5px 9px;text-transform:uppercase}
@@ -48,50 +49,81 @@
   input::placeholder{color:#a8a8a8}
   #status{padding:14px 20px;color:var(--dim)}
   #status.err{color:var(--red)}
-  #status:empty{display:none}
   main{padding:0 20px 60px}
   h2{font-family:"Anton",sans-serif;font-style:normal;font-size:21px;margin:24px 0 7px;letter-spacing:.5px;
     text-transform:uppercase;color:var(--red)}
   .wrap{overflow-x:auto;border:1px solid var(--hard);background:#fff}
 
-  table{border-collapse:separate;border-spacing:0;font-size:14px;width:100%}
-  th,td{padding:6px 10px;text-align:left;border-bottom:1px solid var(--grid);border-right:1px solid var(--grid)}
-  thead th{position:sticky;top:0;background:#fff;z-index:10;
+  /* ---- tables: a gridline around every cell, like the sheet ---- */
+  table{border-collapse:separate;border-spacing:0;font-size:14px;white-space:nowrap}
+  th,td{padding:4px 8px;text-align:right;border-bottom:1px solid var(--grid);border-right:1px solid var(--grid)}
+  thead th{position:sticky;background:#fff;z-index:10;
     font-family:"Sofia Sans Extra Condensed",sans-serif;font-weight:800;
     text-transform:uppercase;letter-spacing:.6px;font-size:12px;color:var(--red)}
-  thead th[data-key]{cursor:pointer;user-select:none}
-  thead th[data-key]:hover{background:#FBEAEA}
-  thead th[data-key].sort-asc,thead th[data-key].sort-desc{background:#FBEAEA;color:var(--blue)}
-  thead th[data-key].sort-asc::after{content:" ▲";font-size:9px}
-  thead th[data-key].sort-desc::after{content:" ▼";font-size:9px}
-  td.num{text-align:right;font-variant-numeric:tabular-nums;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}
-  tr.group td{background:var(--team);font-family:"Anton",sans-serif;font-style:normal;
-    font-size:15px;color:var(--blue);letter-spacing:.5px;padding:6px 10px;
+  thead tr:first-child th{top:0}
+  thead tr:nth-child(2) th{top:25px}
+  th.name,td.name{text-align:left;position:sticky;left:0;background:#fff;z-index:20;
+    min-width:190px;border-right:2px solid var(--hard)}
+  thead th.name{z-index:30}
+  td.num{font-variant-numeric:tabular-nums;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}
+  .gstart{border-left:2px solid var(--hard)}
+  .tot,thead th.tot{background:var(--tot)}
+  td.tot{color:var(--ink);font-weight:800}
+  .rate-dim{color:var(--dim) !important;font-weight:600 !important}
+  .ops-strong{font-weight:900 !important;font-size:1.08em}
+  thead th.tothead{background:var(--tothead);color:var(--red)}
+  tr.team td{background:var(--team);font-family:"Anton",sans-serif;font-style:normal;
+    font-size:16px;text-align:left;color:var(--blue);letter-spacing:.5px;padding:6px 8px;
     text-transform:uppercase;border-bottom:1px solid var(--hard)}
-  table.players tbody tr:not(.group){cursor:pointer}
-  table.players tbody tr:not(.group):hover td{background:#E4E4E4}
-  table.players td.name{font-weight:700}
-  table.players td.name:hover{text-decoration:underline;text-decoration-color:var(--red);text-decoration-thickness:2px}
-  .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-family:"Sofia Sans Extra Condensed",sans-serif;
-    font-weight:800;font-size:11px;letter-spacing:.4px;text-transform:uppercase}
-  .badge.active{background:#E3F2E3;color:var(--green)}
-  .badge.il{background:#FBE1E1;color:var(--red)}
-  .badge.res{background:#EFEFEF;color:var(--dim)}
-  .metanote{color:var(--dim);font-size:13px;margin:0 0 10px}
-
-  /* ---- team directory (default browse view) ---- */
-  .leaguehead{font-family:"Anton",sans-serif;font-size:18px;letter-spacing:.5px;color:var(--blue);
-    text-transform:uppercase;margin:22px 0 4px}
-  .divhead{font-family:"Sofia Sans Extra Condensed",sans-serif;font-weight:800;text-transform:uppercase;
-    font-size:12px;letter-spacing:1.4px;color:var(--red);margin:14px 0 6px}
-  .team-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px;margin-bottom:6px}
-  .team-card{display:flex;align-items:center;gap:9px;border:1px solid var(--grid);border-radius:6px;
-    padding:8px 10px;background:#fff;cursor:pointer;text-align:left}
-  .team-card:hover{border-color:var(--red);background:#FFF6F6}
-  .team-card img{width:28px;height:28px;object-fit:contain;flex:none}
-  .team-card .tname{font-family:"Sofia Sans Extra Condensed",sans-serif;font-weight:800;font-size:13px;
-    text-transform:uppercase;letter-spacing:.3px;line-height:1.2}
-
+  tr.team td.name{background:var(--team)}
+  tr.sum td{font-weight:800;border-top:2px solid var(--hard);background:var(--sum)}
+  tr.sum td.name{background:var(--sum);color:var(--red)}
+  tr.subsum td{background:var(--sub);border-top-color:var(--grid)}
+  tr.subsum td.name{background:var(--sub);color:var(--blue)}
+  td.z{color:#B0B0B0}
+  tbody tr:not(.team){cursor:pointer}
+  /* :not(.pick) so a clicked row turns yellow instantly instead of waiting for the cursor to leave */
+  tbody tr:not(.team):not(.pick):hover td{background:#E4E4E4}
+  tbody tr:not(.team):not(.pick):hover td.name{background:#E4E4E4}
+  tr.pick td,tr.pick td.name,tr.pick td.tot{background:var(--pick);color:var(--ink);font-weight:800}
+  tr.pick td.z{color:#8a7a3a}
+  tr.pick td.name{border-left:4px solid var(--red);padding-left:4px}
+  thead th[data-stat]{cursor:pointer}
+  thead th[data-stat]:hover{background:var(--colpick)}
+  th.gclick{cursor:pointer}
+  th.gclick:hover{filter:brightness(.94)}
+  th.gclick:hover .glabel::after{content:" ✕";opacity:.6}
+  /* ---- Pitchers by Game: one row per game, each team its own collapsible panel side by side ---- */
+  .pitgames{display:flex;flex-direction:column;gap:16px}
+  .pitgame{display:flex;flex-wrap:nowrap;align-items:flex-start;gap:14px}
+  .pitgame-label{flex:0 0 auto;writing-mode:vertical-rl;transform:rotate(180deg);
+    font-family:"Anton",sans-serif;font-size:14px;letter-spacing:.3px;color:var(--red);
+    text-transform:uppercase;padding:6px 2px;align-self:stretch;display:flex;align-items:center;
+    justify-content:center;border:1px solid var(--hard);background:var(--chrome)}
+  .pitteam{flex:none;border:1px solid var(--hard);min-width:230px}
+  .pitteam table{margin:0}
+  .pitteam-head{cursor:pointer;background:var(--team);font-family:"Anton",sans-serif;font-weight:400;
+    font-size:15px;text-transform:uppercase;letter-spacing:.3px;color:var(--blue);padding:6px 10px;
+    border-bottom:1px solid var(--hard);white-space:nowrap}
+  .pitteam.opp .pitteam-head{background:var(--chrome);color:var(--dim)}
+  .pitteam-head:hover{filter:brightness(.94)}
+  .pitteam.closed .pitteam-head{border-bottom:none}
+  /* ---- a collapsed game: the whole column narrows to a thin clickable strip, still in place ---- */
+  .gthin{width:20px;min-width:20px;max-width:20px;padding:4px 0;background:var(--chrome);cursor:pointer}
+  th.gthin{background:var(--team)}
+  .gthin:hover{background:var(--pick)}
+  .gstub{writing-mode:vertical-rl;transform:rotate(180deg);font-family:"Sofia Sans Extra Condensed",sans-serif;
+    font-weight:800;font-size:11px;letter-spacing:.5px;color:var(--red);margin:0 auto}
+  td.colpick{background:var(--colpick);color:var(--ink);font-weight:800}
+  td.colpick.z{color:#5b7a94}
+  thead th.colpick{background:var(--colpick);color:var(--blue)}
+  tr.pick td.colpick{background:#EBDFA0}
+  .pos{color:var(--dim);font-size:12px;margin-left:5px}
+  .glabel{font-family:"Sofia Sans Semi Condensed",sans-serif;font-weight:800;font-size:13px;
+    color:var(--ink);text-transform:none;letter-spacing:0}
+  .gres{font-weight:800}
+  .w{color:var(--green)} .l{color:var(--red)} .live{color:#B8860B}
+  .sched{color:#3d3d3d;font-size:14px;margin:0 0 10px;line-height:1.5;white-space:pre-line}
   button{background:#fff;color:var(--ink);border:1px solid var(--grid);border-radius:4px;
     padding:7px 11px;font-family:"Sofia Sans Extra Condensed",sans-serif;font-weight:800;
     text-transform:uppercase;letter-spacing:.8px;font-size:13px;cursor:pointer}
@@ -100,39 +132,46 @@
   @media (max-width:640px){
     .datanote{position:static;display:inline-block;margin:0 0 8px}
     h1{font-size:28px}
+    .matchup img{width:24px;height:24px}
   }
+  table.players td.name{cursor:pointer}
+  table.players td.name:hover{text-decoration:underline;text-decoration-color:var(--red);text-decoration-thickness:2px}
 
   /* ---- player modal ---- */
   .modal-backdrop{position:fixed;inset:0;background:rgba(40,40,40,.5);display:flex;
     align-items:center;justify-content:center;z-index:100;padding:20px}
   .modal-backdrop[hidden]{display:none}
-  .modal{background:#fff;border:1px solid var(--hard);border-radius:6px;max-width:440px;
-    width:100%;max-height:88vh;overflow:auto;padding:20px;position:relative;
+  .modal{background:#fff;border:1px solid var(--hard);border-radius:6px;max-width:420px;
+    width:100%;max-height:86vh;overflow:auto;padding:20px;position:relative;
     box-shadow:0 18px 50px rgba(0,0,0,.3)}
   .modal-close{position:absolute;top:10px;right:10px;background:#fff;border:1px solid var(--grid);
     color:var(--dim);width:28px;height:28px;border-radius:50%;font-size:17px;line-height:1;cursor:pointer;
     display:flex;align-items:center;justify-content:center}
   .modal-close:hover{color:var(--red);border-color:var(--red)}
-  .modal-head{display:flex;align-items:center;gap:14px;margin-bottom:12px;padding-right:38px}
+  .modal-head{display:flex;align-items:center;gap:14px;margin-bottom:16px;padding-right:38px}
   .modal-headshot{width:72px;height:72px;border-radius:50%;object-fit:cover;background:var(--chrome);
     border:2px solid var(--grid);flex:none}
   .modal-name{font-family:"Anton",sans-serif;font-size:21px;letter-spacing:.3px;line-height:1.1}
   .modal-sub{color:var(--dim);font-family:"Sofia Sans Extra Condensed",sans-serif;font-weight:800;
     text-transform:uppercase;font-size:12px;letter-spacing:1px;margin-top:4px}
-
-  .tf-pills{display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 16px}
-  .tf-pill{background:var(--chrome);color:var(--ink);border:1px solid var(--grid);border-radius:999px;
-    padding:6px 12px;font-family:"Sofia Sans Extra Condensed",sans-serif;font-weight:800;
-    text-transform:uppercase;letter-spacing:.5px;font-size:11.5px;cursor:pointer}
-  .tf-pill:hover{border-color:var(--red)}
-  .tf-pill.on{background:var(--red);border-color:var(--red);color:#fff}
-
-  .modal-export-row{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0 4px}
-  .modal-export-btn{background:var(--red);color:#fff;border:1px solid var(--red);border-radius:4px;
-    padding:10px 16px;font-family:"Sofia Sans Extra Condensed",sans-serif;font-weight:800;
-    text-transform:uppercase;letter-spacing:.6px;font-size:13px;cursor:pointer}
-  .modal-export-btn:hover{background:#960000;border-color:#960000}
-  .modal-export-btn:disabled{opacity:.35;cursor:default;background:var(--chrome);color:var(--dim);border-color:var(--grid)}
+  .modal-export-row{display:flex;gap:12px;margin-top:7px;align-items:center}
+  .modal-export-btn{background:none;border:none;padding:0;margin:0;color:var(--dim);
+    font-family:"Sofia Sans Extra Condensed",sans-serif;font-weight:700;text-transform:uppercase;
+    font-size:10px;letter-spacing:.6px;cursor:pointer;opacity:.75}
+  .modal-export-btn:hover{opacity:1;color:var(--red)}
+  .modal-export-btn:disabled{opacity:.3;cursor:default}
+  .modal-splits{flex-wrap:wrap;row-gap:4px}
+  .modal-split-btn{background:#fff;border:1px solid var(--grid);color:var(--dim);border-radius:999px;
+    font-family:"Sofia Sans Extra Condensed",sans-serif;font-weight:700;text-transform:uppercase;
+    font-size:10px;letter-spacing:.4px;padding:3px 8px;cursor:pointer}
+  .modal-split-btn:hover{color:var(--red);border-color:var(--red)}
+  .modal-split-btn.active{background:var(--red);border-color:var(--red);color:#fff}
+  .modal-split-date{background:#fff;border:1px solid var(--grid);color:var(--dim);border-radius:999px;
+    font-family:"Sofia Sans Extra Condensed",sans-serif;font-weight:700;font-size:10px;letter-spacing:.4px;
+    padding:2px 8px;cursor:pointer}
+  .modal-split-date:hover{color:var(--red);border-color:var(--red)}
+  .modal-split-date.active{background:var(--red);border-color:var(--red);color:#fff}
+  .modal-split-date.active::-webkit-calendar-picker-indicator{filter:invert(1)}
   .modal-section{margin-bottom:16px}
   .modal-section h3{font-family:"Sofia Sans Extra Condensed",sans-serif;font-weight:800;
     text-transform:uppercase;font-size:12px;letter-spacing:1.5px;color:var(--red);margin:0 0 8px}
@@ -158,24 +197,23 @@
     box-shadow:0 0 0 3px rgba(192,0,0,.18);animation:onair-pulse 1.6s ease-in-out infinite}
   @keyframes onair-pulse{50%{opacity:.35}}
   #onairText b{color:var(--ink);font-weight:800}
-  .exit-btn{background:#fff;color:var(--red);border:1px solid var(--red);border-radius:4px;
-    padding:5px 12px;font-family:"Sofia Sans Extra Condensed",sans-serif;font-weight:800;
-    text-transform:uppercase;letter-spacing:.6px;font-size:11.5px;cursor:pointer}
-  .exit-btn:hover{background:var(--red);color:#fff}
+  #onairClear{background:none;border:none;padding:0;color:var(--dim);text-decoration:underline;
+    text-decoration-color:var(--grid);font-family:inherit;font-size:11px;cursor:pointer}
+  #onairClear:hover{color:var(--red);text-decoration-color:var(--red)}
 
-  /* ---- OBS display view (?display=1) ---- */
+  /* ---- OBS display view (?display=1): a standalone, self-updating lower third, drawn onto a
+     fixed 1920x1080 canvas (like the PNG export) so the OBS source can be added once at full
+     broadcast size and never repositioned — the bar always lands in the same spot. Stays dark
+     and self-contained (hex, not theme vars) since it renders over video, not the light tool UI. ---- */
   #lowerThirdDisplay{display:none}
   body.display-mode #lowerThirdDisplay{display:block;position:relative;width:1920px;height:1080px}
-  /* always present in the DOM (it's position:absolute, so it never affects layout) — shown/hidden and
-     swapped between players purely via opacity, so bringing it on, taking it off, or switching to a
-     new player all get a smooth fade instead of an instant pop */
   .lt-bar{display:flex;align-items:center;gap:22px;position:absolute;left:0;right:0;bottom:60px;height:200px;
     padding:0 40px;background-color:#0E2340;
     background-image:linear-gradient(#F5F7FA,#F5F7FA),
       repeating-linear-gradient(90deg, rgba(255,255,255,.05) 0 1px, transparent 1px 26px);
     background-repeat:no-repeat,repeat; background-size:100% 5px,auto; background-position:top left,top left;
-    box-sizing:border-box; opacity:0; pointer-events:none; transition:opacity .35s ease}
-  .lt-bar.lt-visible{opacity:1}
+    box-sizing:border-box}
+  .lt-bar[hidden]{display:none}
   .lt-headshot{width:152px;height:152px;border-radius:50%;object-fit:cover;background:#153157;
     border:5px solid #F5F7FA;flex:none}
   .lt-info{flex:none; min-width:0}
@@ -183,24 +221,58 @@
   .lt-sub{font-family:"Sofia Sans Extra Condensed",sans-serif;font-weight:700;font-size:20px;
     color:#93a5c2;text-transform:uppercase;letter-spacing:.3px;white-space:nowrap}
   .lt-divider{width:2px;align-self:stretch;margin:34px 0;background:#26426e;flex:none}
-  .lt-stats{flex:1;min-width:0;text-align:center}
-  .lt-hitline{font-family:"Sofia Sans Extra Condensed",sans-serif;font-weight:700;font-size:18px;
-    letter-spacing:.4px;color:#93a5c2;text-transform:uppercase;margin-bottom:6px;
-    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .lt-hitline .split{color:#F5F7FA;font-weight:800}
-  /* never wraps to a second row — sizeCells() in JS shrinks cell width + font to fit whatever
-     count of stats is on screen, in one line, same as the canvas PNG export does */
-  .lt-cells{display:flex;justify-content:center;align-items:flex-end;gap:0;flex-wrap:nowrap;width:100%}
-  .lt-cells .lt-cell{width:150px;flex:0 0 auto;text-align:center;min-width:0}
-  .lt-cell .v{font-family:"Sofia Sans Extra Condensed",sans-serif;font-weight:800;font-size:54px;color:#F5F7FA;
-    white-space:nowrap;overflow:hidden}
-  .lt-cell .k{font-family:"Sofia Sans Extra Condensed",sans-serif;font-weight:700;font-size:17px;
-    color:#93a5c2;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap;overflow:hidden}
+  .lt-stats{flex:1;min-width:0;text-align:center;position:relative;align-self:stretch;
+    display:flex;flex-direction:column;justify-content:center}
+  .lt-hitline{position:absolute;top:14px;left:0;right:0;margin:0;font-family:"Sofia Sans Extra Condensed",sans-serif;
+    font-weight:700;font-size:22px;letter-spacing:.4px;text-transform:uppercase}
+  .lt-hitline .lt-splitlabel{color:#F5F7FA}
+  .lt-hitline .lt-hitcount{color:#93a5c2}
+  .lt-cells{display:flex;justify-content:space-between;align-items:center;width:100%;flex-wrap:nowrap}
+  .lt-cells .lt-cell{text-align:center;flex:0 0 auto}
+  .lt-cell .v{font-family:"Sofia Sans Extra Condensed",sans-serif;font-weight:800;color:#F5F7FA;line-height:1}
+  .lt-cell .k{font-family:"Sofia Sans Extra Condensed",sans-serif;font-weight:700;line-height:1;margin-top:2px;
+    color:#93a5c2;text-transform:uppercase;letter-spacing:.4px}
   .lt-watermark{position:absolute;right:20px;bottom:14px;font-family:"Sofia Sans Extra Condensed",sans-serif;
     font-weight:700;font-size:14px;letter-spacing:.4px;color:rgba(255,255,255,.35)}
   body.display-mode{background:transparent}
   body.display-mode header, body.display-mode main, body.display-mode #status,
   body.display-mode .modal-backdrop{display:none}
+
+  /* ---- view panel: chips that hide games / teams / individual stats ---- */
+  #viewbox{margin-top:9px}
+  #viewbox>summary{cursor:pointer;list-style:none;font-family:"Sofia Sans Extra Condensed",sans-serif;
+    font-weight:800;text-transform:uppercase;font-size:12px;letter-spacing:1px;color:var(--dim)}
+  #viewbox>summary::-webkit-details-marker{display:none}
+  #viewbox>summary::before{content:"▸ ";color:var(--red)}
+  #viewbox[open]>summary::before{content:"▾ "}
+  #viewbox>summary:hover{color:var(--red)}
+  .chiprow{display:flex;flex-wrap:wrap;gap:5px;align-items:center;margin:5px 0}
+  .chiplabel{font-family:"Sofia Sans Extra Condensed",sans-serif;font-weight:800;text-transform:uppercase;
+    font-size:11px;letter-spacing:1px;color:var(--red);min-width:120px}
+  .chip{padding:3px 9px;font-size:11px;letter-spacing:.4px;border-radius:999px}
+  .chip.off{color:#a0a0a0;background:var(--chrome);text-decoration:line-through}
+
+  /* ---- restore bar: whatever's currently collapsed, one click from coming back ---- */
+  .restorebar{padding:8px 20px;margin:0;background:var(--tothead);border-bottom:1px solid var(--hard)}
+  .restorebar .chiplabel{min-width:auto}
+  .restorebar .chip.restore{background:#fff;border-color:var(--red);color:var(--red);font-weight:800}
+  .restorebar .chip.restore:hover{background:var(--red);color:#fff}
+
+  /* ---- collapsible sections ---- */
+  #out details>summary{list-style:none;cursor:pointer}
+  #out details>summary::-webkit-details-marker{display:none}
+  #out summary h2::before{content:"▸ "}
+  #out details[open]>summary h2::before{content:"▾ "}
+  #out summary:hover h2{color:#8a0000}
+
+  /* ---- alternating game blocks, straight off the scoresheet ---- */
+  #out thead th.sdesc::after{content:" ▼";font-size:9px}
+  #out thead th.sasc::after{content:" ▲";font-size:9px}
+  #out thead th.gA{background:var(--gA)}
+  #out thead th.gB{background:var(--gB)}
+  #out tbody tr:not(.pick):not(:hover) td.gA:not(.colpick){background:var(--gAlite)}
+  #out tbody tr:not(.pick):not(:hover) td.gB:not(.colpick){background:var(--gBlite)}
+  #out tbody tr.team td.gA,#out tbody tr.team td.gB{background:var(--team)}
 
   span.note{font-family:"Sofia Sans Extra Condensed",sans-serif;font-weight:800;font-size:11px;
     letter-spacing:.5px;margin-left:5px;text-transform:uppercase}
@@ -211,15 +283,13 @@
   <div class="datanote" id="datanote">Data note: <b>Live via MLB StatsAPI</b></div>
   <div class="eyebrow">Talkin' Yanks</div>
   <div class="titlerow">
-    <h1>TRADE SNAPSHOT<span>.</span></h1>
-    <button id="goHome" class="home-btn" type="button" title="Back to all 30 teams">⌂ All Teams</button>
-    <div class="teambadge" id="teambadge"></div>
+    <h1>SERIES SNAPSHOT<span>.</span></h1>
+    <div class="matchup" id="matchup"></div>
   </div>
   <div class="controls">
     <div><label for="season">Season</label><select id="season"></select></div>
-    <div><label for="division">Division</label><select id="division"><option value="">All Divisions</option></select></div>
-    <div><label for="team">Team</label><select id="team"><option value="">Select a team…</option></select></div>
-    <div><label for="find">Global player search</label><input id="find" type="search" placeholder="Search any MLB player…" autocomplete="off"></div>
+    <div><label for="series">Series</label><select id="series"><option>—</option></select></div>
+    <div><label for="find">Find player</label><input id="find" type="search" placeholder="Rice, Volpe, Judge…" autocomplete="off"></div>
     <div><label>OBS Display</label>
       <button id="openDisplay" type="button">Open Display ↗</button>
     </div>
@@ -227,10 +297,15 @@
   <div class="onair" id="onair" hidden>
     <span class="onair-dot"></span>
     <span id="onairText"></span>
-    <button id="onairClear" class="exit-btn" type="button" title="Remove the lower third from OBS">✕ Exit Lower Third</button>
+    <button id="onairClear" type="button">Clear</button>
   </div>
+  <details id="viewbox">
+    <summary>View — hide games, teams or stats</summary>
+    <div id="viewchips"></div>
+  </details>
 </header>
 <div id="status">Loading…</div>
+<div id="collapsedBar" class="chiprow restorebar" hidden></div>
 <main id="out"></main>
 
 <div id="modalBackdrop" class="modal-backdrop" hidden>
@@ -241,25 +316,24 @@
       <div>
         <div class="modal-name" id="modalName"></div>
         <div class="modal-sub" id="modalSub"></div>
+        <div class="modal-export-row modal-splits" id="modalSplit"></div>
+        <div class="modal-export-row">
+          <button id="modalDownload" class="modal-export-btn" type="button"
+            title="Download the selected split as a broadcast lower-third PNG">PNG ⤓</button>
+        </div>
       </div>
     </div>
-    <div class="tf-pills" id="tfPills"></div>
     <div id="modalBody" class="modal-body"></div>
-    <div class="modal-export-row" id="modalExportRow">
-      <button id="modalDownloadBat" class="modal-export-btn" type="button" hidden
-        title="Push to OBS and download hitting lower-third PNG">⤓ Download Hitting PNG</button>
-      <button id="modalDownloadPit" class="modal-export-btn" type="button" hidden
-        title="Push to OBS and download pitching lower-third PNG">⤓ Download Pitching PNG</button>
-      <button id="modalExitOnAir" class="exit-btn" type="button"
-        title="Remove the lower third from OBS">✕ Exit Lower Third</button>
-    </div>
     <div id="modalDlNote" class="modal-dlnote"></div>
   </div>
 </div>
 
-<!-- OBS Browser Source view: add this same file/URL with ?display=1 as a Browser Source. -->
+<!-- OBS Browser Source view: add this same file/URL with ?display=1 as a Browser Source.
+     Everything above is hidden by CSS in display mode; only the bar below renders, on a
+     transparent background, and it updates itself whenever the control page (this file,
+     opened normally) pushes a new selection. -->
 <div id="lowerThirdDisplay">
-  <div class="lt-bar" id="ltBar">
+  <div class="lt-bar" id="ltBar" hidden>
     <img id="ltHeadshot" class="lt-headshot" alt="">
     <div class="lt-info">
       <div class="lt-name" id="ltName"></div>
@@ -277,449 +351,365 @@
 <script>
 const API = 'https://statsapi.mlb.com/api/v1';
 const j = u => fetch(u).then(r => { if(!r.ok) throw new Error(u+' → '+r.status); return r.json(); });
-const jCache = new Map();
-const jc = u => (jCache.has(u) ? jCache.get(u) : (jCache.set(u, j(u)), jCache.get(u)));
 const $ = id => document.getElementById(id);
 const el = (t, cls, txt) => { const e = document.createElement(t); if(cls) e.className = cls; if(txt != null) e.textContent = txt; return e; };
 
 // ---- control ↔ display link: this same file, opened a second time with ?display=1, becomes an
-// OBS Browser Source that shows whichever player was last pushed here — no server involved.
+// OBS Browser Source that shows whichever player was last clicked here — no server involved.
+// BroadcastChannel pushes it live to any other tab of this file open in the same browser engine;
+// localStorage is the fallback so a display opened later still picks up the last pick.
 const LT_KEY = 'ty-lower-third-onair';
 const isDisplayMode = new URLSearchParams(location.search).get('display') === '1';
 const ltChannel = 'BroadcastChannel' in window ? new BroadcastChannel('ty-lower-third') : null;
 if (isDisplayMode) document.body.classList.add('display-mode');
 
+const BAT = [['atBats','AB'],['runs','R'],['hits','H'],['rbi','RBI'],['homeRuns','HR'],['baseOnBalls','BB'],
+             ['strikeOuts','K'],['plateAppearances','PA'],['sacFlies','SF'],
+             ['stolenBases','SB'],['caughtStealing','CS'],['hitByPitch','HBP']];
+const PIT = [['outs','IP'],['hits','H'],['runs','R'],['earnedRuns','ER'],['baseOnBalls','BB'],['strikeOuts','K'],['homeRuns','HR']];
+// summed but not shown per game — SLG/OPS need totalBases, and GIDP is series-totals-only (see `rates`)
+const BAT_SUM = [...BAT, ['totalBases','TB'], ['groundIntoDoublePlay','GIDP']];
+const ip = outs => Math.floor(outs/3) + '.' + (outs % 3);
+const avg = r => r.atBats ? (r.hits/r.atBats).toFixed(3).replace(/^0/,'') : '.---';
+const era = r => r.outs ? (r.earnedRuns*27/r.outs).toFixed(2) : '-.--';
+const obpStr = r => rate(r.hits + r.baseOnBalls + r.hitByPitch,
+                         r.atBats + r.baseOnBalls + r.hitByPitch + r.sacFlies);
+const slgStr = r => rate(r.totalBases, r.atBats);
+const opsStr = r => (obp(r) + (r.atBats ? r.totalBases/r.atBats : 0)).toFixed(3).replace(/^0/,'');
+const mmdd = d => new Date(d + 'T12:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+const filled = o => o && Object.keys(o).length;   // API sends {} for "did not appear"
+
+// ---- what's hidden: one Set per chip group, survives repaints and series changes ----
+const SD = ['away', 'home'];
+const hides = {};                                        // group key → Set of hidden labels
+const hset = k => hides[k] || (hides[k] = new Set());
+// col defs are [key,label] pairs (label at index 1) or plain label strings
+const shown = (k, cols, li = 1) => cols.filter(c => !hset(k).has(Array.isArray(c) ? c[li] : c));
+const anyShown = (k, labels) => labels.some(l => !hset(k).has(l));
+const collapsed = new Set();                             // section titles the user closed
+
+// Which stat column the tables are sorted by, if any. Set by clicking a stat header:
+// {tbl: which table, stat: column label, gi: game index or null for the series-total group, dir: -1 desc / 1 asc}
+let sortBy = null;
+const sortActive = tbl => sortBy && sortBy.tbl === tbl ? sortBy : null;
+// numbers arrive as strings ('.271', '6.1', '–'); a blank cell must never sort as zero
+const sortNum = v => { const n = parseFloat(v); return isNaN(n) ? null : n; };
+// null = didn't appear, always last whichever way we're sorting
+const sortCmp = (dir, val) => (a, b) => {
+  const av = val(a), bv = val(b);
+  if (av === bv) return 0;
+  if (av === null) return 1;
+  if (bv === null) return -1;
+  return (av - bv) * dir;
+};
+
+// re-light the sorted column and mark its header with a direction arrow (state, so it survives a repaint)
+function paintSortLight() {
+  if (!sortBy) return;
+  const tables = document.querySelectorAll(`#out table[data-tbl="${sortBy.tbl}"]`);
+  tables.forEach(t => {
+    t.querySelectorAll(`[data-stat="${sortBy.stat}"]`).forEach(c => c.classList.add('colpick'));
+    t.querySelectorAll(`thead th[data-stat="${sortBy.stat}"]`).forEach(th => {
+      const gi = th.dataset.gi === undefined ? null : +th.dataset.gi;
+      if (gi === sortBy.gi) th.classList.add(sortBy.dir === -1 ? 'sdesc' : 'sasc');
+    });
+  });
+}
+
+function chipRow(title, labels, key) {
+  const row = el('div', 'chiprow');
+  row.appendChild(el('span', 'chiplabel', title));
+  labels.forEach(lbl => {
+    const b = el('button', 'chip' + (hset(key).has(lbl) ? ' off' : ''), lbl);
+    b.onclick = () => { hset(key).has(lbl) ? hset(key).delete(lbl) : hset(key).add(lbl); repaint(); };
+    row.appendChild(b);
+  });
+  $('viewchips').appendChild(row);
+}
+
+// A standing "click to bring it back" strip for whatever's currently collapsed — games, teams,
+// stat columns, anything hidden via a chip. Sits above the tables, outside the View panel, so
+// undoing a collapse never requires opening that panel back up.
+function paintCollapsedBar() {
+  const bar = $('collapsedBar'); if (!bar) return;
+  // games get their own inline thin-column stub right in the table now — no need to duplicate
+  // them up here too, so this bar is just for teams/stat-column hides, which don't have that.
+  const entries = Object.entries(hides).filter(([key]) => key !== 'game')
+    .flatMap(([key, set]) => [...set].map(v => ({ key, v })));
+  bar.hidden = !entries.length;
+  bar.innerHTML = '';
+  if (!entries.length) return;
+  bar.appendChild(el('span', 'chiplabel', 'Collapsed'));
+  entries.forEach(({ key, v }) => {
+    const b = el('button', 'chip restore', v + '  ↩');
+    b.title = `Bring "${v}" back`;
+    b.onclick = () => { hset(key).delete(v); repaint(); };
+    bar.appendChild(b);
+  });
+}
+
+// Toggling a chip only changes what's drawn, never what's fetched — the loader stashes a
+// painter closure over the data it already has and repaint() re-runs just that.
+let paintFn = null;
+function repaint() {
+  if (!paintFn) return;
+  $('out').innerHTML = ''; $('viewchips').innerHTML = '';
+  const row = el('div', 'chiprow');
+  const all = el('button', 'chip', 'Show everything');
+  all.onclick = () => { Object.keys(hides).forEach(k => hides[k].clear()); collapsed.clear(); collapsedPitTeams.clear(); repaint(); };
+  row.appendChild(all); $('viewchips').appendChild(row);
+  paintCollapsedBar();
+  try { paintFn(); } catch (e) { say(e.message, true); }
+}
+
+// collapsible section: summary/h2 + optional note + horizontally scrollable table
+function addTable(title, table, note) {
+  const d = el('details');
+  d.open = !collapsed.has(title);
+  const sm = el('summary');
+  sm.appendChild(el('h2', null, title));
+  d.appendChild(sm);
+  if (note) d.appendChild(el('div', 'sched', note));
+  if (table) { const w = el('div', 'wrap'); w.appendChild(table); d.appendChild(w); }
+  d.ontoggle = () => d.open ? collapsed.delete(title) : collapsed.add(title);
+  $('out').appendChild(d);
+}
+
+const teamId = () => 147, teamName = () => 'New York Yankees';
 const logoURL = id => `https://www.mlbstatic.com/team-logos/${id}.svg`;
+function setMatchup(oppId, oppName) {
+  const m = $('matchup');
+  if (!oppId) { m.innerHTML = ''; return; }
+  m.innerHTML = `<img src="${logoURL(teamId())}" alt="Yankees" onerror="this.remove()">`
+    + `<span class="x">×</span>`
+    + `<img src="${logoURL(oppId)}" alt="${oppName || ''}" onerror="this.remove()">`;
+}
+let series = [];
+let currentIndex = new Map();  // pid → row data for whichever view is on screen, used by the player modal
+let indexMode = 'played';      // 'played' → row has .bat/.pit series sums; 'preview' → row has .hitting/.pitching {a,b}
+let playerYear = '';
+let modalPid = null;
+let modalSplitKey = 'season';   // which split the split-tab buttons currently have active
+let lastCustomDate = '';        // last date picked in the custom "since ___" field
+
 const headshotURL = pid =>
   `https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png,q_auto:best,f_auto/v1/people/${pid}/headshot/67/current`;
 
-function say(msg, isErr) { $('status').textContent = msg || ''; $('status').className = isErr ? 'err' : ''; }
-
-// =====================================================================================
-// Teams / divisions / global player index
-// =====================================================================================
-
-let teamsById = new Map();       // id -> team object {id,name,abbreviation,division,league}
-let divisions = [];              // [{league, name, short, teams:[...]}] in display order
-let allPlayers = [];             // full-season player index for global search
-let currentTeamId = null;
-let currentView = 'directory';   // 'directory' | 'roster' | 'search'
-
-const divShort = name => (name || '').replace('American League', 'AL').replace('National League', 'NL');
-
-async function loadTeams(year) {
-  const d = await j(`${API}/teams?sportId=1&season=${year}&activeStatus=Yes`);
-  const teams = (d.teams || []).filter(t => t.division && t.league);
-  teamsById = new Map(teams.map(t => [t.id, t]));
-
-  const byDiv = new Map();
-  teams.forEach(t => {
-    const key = t.division.id;
-    if (!byDiv.has(key)) byDiv.set(key, { league: t.league.name, name: t.division.name, short: divShort(t.division.name), teams: [] });
-    byDiv.get(key).teams.push(t);
-  });
-  divisions = [...byDiv.values()].sort((a, b) => a.league.localeCompare(b.league) || a.name.localeCompare(b.name));
-  divisions.forEach(dv => dv.teams.sort((a, b) => a.name.localeCompare(b.name)));
-
-  $('division').innerHTML = '<option value="">All Divisions</option>' +
-    divisions.map(dv => `<option value="${dv.short}">${dv.short}</option>`).join('');
-  populateTeamSelect();
-}
-
-function populateTeamSelect(divShortFilter) {
-  const list = divShortFilter ? divisions.filter(dv => dv.short === divShortFilter) : divisions;
-  const opts = list.map(dv =>
-    `<optgroup label="${dv.short}">` +
-    dv.teams.map(t => `<option value="${t.id}">${t.name}</option>`).join('') +
-    `</optgroup>`).join('');
-  $('team').innerHTML = '<option value="">Select a team…</option>' + opts;
-}
-
-async function loadPlayerIndex(year) {
-  const d = await j(`${API}/sports/1/players?season=${year}`);
-  allPlayers = (d.people || []).map(p => ({
-    id: p.id, name: p.fullName, pos: (p.primaryPosition && p.primaryPosition.abbreviation) || '',
-    number: p.primaryNumber || '', teamId: p.currentTeam ? p.currentTeam.id : null,
-    teamName: p.currentTeam ? p.currentTeam.name : '',
-  })).filter(p => p.teamId);
-}
-
-function setTeamBadge(team) {
-  const box = $('teambadge');
-  if (!team) { box.innerHTML = ''; return; }
-  box.innerHTML = `<img src="${logoURL(team.id)}" alt="${team.name}" onerror="this.remove()">` +
-    `<span class="tn">${team.name}</span>`;
-}
-
-// =====================================================================================
-// Directory (default browse view) — every team, grouped by league/division
-// =====================================================================================
-
-function renderDirectory(divShortFilter) {
-  currentView = 'directory';
-  setTeamBadge(null);
-  const out = $('out'); out.innerHTML = '';
-  say('');
-  const list = divShortFilter ? divisions.filter(dv => dv.short === divShortFilter) : divisions;
-  let curLeague = null;
-  list.forEach(dv => {
-    if (dv.league !== curLeague) { out.appendChild(el('div', 'leaguehead', dv.league)); curLeague = dv.league; }
-    out.appendChild(el('div', 'divhead', dv.short));
-    const grid = el('div', 'team-grid');
-    dv.teams.forEach(t => {
-      const card = el('button', 'team-card');
-      card.type = 'button';
-      card.innerHTML = `<img src="${logoURL(t.id)}" alt="" onerror="this.remove()"><span class="tname">${t.name}</span>`;
-      card.onclick = () => { $('team').value = t.id; $('division').value = dv.short; guard(loadRoster)(t.id); };
-      grid.appendChild(card);
-    });
-    out.appendChild(grid);
-  });
-}
-
-// =====================================================================================
-// Roster — active / injured list / 40-man reserve, grouped, click a name to open the modal
-// =====================================================================================
-
-const POS_ORDER = { C:1, '1B':2, '2B':3, '3B':4, SS:5, LF:6, CF:7, RF:8, OF:9, DH:10, SP:11, RP:12, P:13, TWP:14 };
-const posRank = p => POS_ORDER[p] ?? 50;
-
-function classifyStatus(entry) {
-  const code = entry.status && entry.status.code;
-  const desc = (entry.status && entry.status.description) || '';
-  if (code === 'A') return 'active';
-  if (/IL|DL/i.test(desc) || /^D/.test(code || '')) return 'il';
-  return 'res';
-}
-
-async function loadRoster(teamId) {
-  currentTeamId = teamId; currentView = 'roster';
-  const team = teamsById.get(+teamId);
-  const y = $('season').value;
-  setTeamBadge(team);
-  $('find').value = '';
-  say('Loading roster…');
-  let roster = [];
-  try {
-    const d = await j(`${API}/teams/${teamId}/roster?rosterType=40Man&season=${y}`);
-    roster = d.roster || [];
-  } catch (e) { /* fall through to active */ }
-  if (!roster.length) {
-    try {
-      const d = await j(`${API}/teams/${teamId}/roster?rosterType=active&season=${y}`);
-      roster = (d.roster || []).map(r => ({ ...r, status: r.status || { code: 'A', description: 'Active' } }));
-    } catch (e) { say('Could not load that roster: ' + e.message, true); return; }
-  }
-  say('');
-  rosterState = {
-    team, year: y,
-    rows: roster.map(r => ({
-      id: r.person.id, name: r.person.fullName, pos: (r.position && r.position.abbreviation) || '',
-      number: r.jerseyNumber || '', group: classifyStatus(r),
-    })),
-  };
-  sortState = { table: 'roster', key: null, dir: 1 };
-  paintRoster();
-}
-
-// numbers sort numerically (blank last); everything else sorts as case-insensitive text
-function sortRows(rows, key, dir) {
-  if (!key) return rows;
-  return [...rows].sort((a, b) => {
-    let av = a[key], bv = b[key];
-    if (key === 'number') {
-      av = av === '' || av == null ? null : +av; bv = bv === '' || bv == null ? null : +bv;
-      if (av === null && bv === null) return 0;
-      if (av === null) return 1; if (bv === null) return -1;
-      return (av - bv) * dir;
-    }
-    av = (av || '').toString().toLowerCase(); bv = (bv || '').toString().toLowerCase();
-    if (av < bv) return -1 * dir; if (av > bv) return 1 * dir; return 0;
-  });
-}
-
-// stamp a header cell as sortable and light it up if it's the active sort column
-function sortableTh(label, key, tbl) {
-  const th = el('th', null, label);
-  th.dataset.key = key; th.dataset.tbl = tbl;
-  if (sortState.table === tbl && sortState.key === key) th.classList.add(sortState.dir === 1 ? 'sort-asc' : 'sort-desc');
-  return th;
-}
-
-function paintRoster() {
-  if (!rosterState) return;
-  const { team, year, rows } = rosterState;
-  currentIndex = new Map();
-  rows.forEach(r => currentIndex.set(String(r.id), { id: r.id, name: r.name, pos: r.pos, team: team ? team.name : '', teamId: team ? team.id : null }));
-
-  const groups = [
-    ['active', 'ACTIVE ROSTER'],
-    ['il', 'INJURED LIST'],
-    ['res', '40-MAN / RESERVE'],
-  ];
-  const table = el('table', 'players');
-  const thead = el('thead'); const hr = el('tr');
-  hr.appendChild(sortableTh('#', 'number', 'roster'));
-  hr.appendChild(sortableTh('Name', 'name', 'roster'));
-  hr.appendChild(sortableTh('Pos', 'pos', 'roster'));
-  hr.appendChild(sortableTh('Status', 'group', 'roster'));
-  thead.appendChild(hr); table.appendChild(thead);
-  const tbody = el('tbody');
-  const active = sortState.table === 'roster' ? sortState : null;
-  groups.forEach(([key, label]) => {
-    let g = rows.filter(r => r.group === key);
-    g = active && active.key
-      ? sortRows(g, active.key, active.dir)
-      : g.sort((a, b) => posRank(a.pos) - posRank(b.pos) || a.name.localeCompare(b.name));
-    if (!g.length) return;
-    const trG = el('tr', 'group');
-    const tdG = el('td', null, `${label} (${g.length})`); tdG.colSpan = 4;
-    trG.appendChild(tdG); tbody.appendChild(trG);
-    g.forEach(r => {
-      const tr = el('tr'); tr.dataset.pid = r.id;
-      tr.appendChild(el('td', 'num', r.number));
-      tr.appendChild(el('td', 'name', r.name));
-      tr.appendChild(el('td', null, r.pos));
-      const badgeCls = key === 'active' ? 'active' : key === 'il' ? 'il' : 'res';
-      const badgeText = key === 'active' ? 'Active' : key === 'il' ? 'Injured List' : 'Reserve';
-      tr.appendChild(el('td', null, '')).innerHTML = `<span class="badge ${badgeCls}">${badgeText}</span>`;
-      tbody.appendChild(tr);
-    });
-  });
-  table.appendChild(tbody);
-  addTable(`${team ? team.name : 'Team'} Roster — ${year}`, table);
-}
-
-function addTable(title, table, note) {
-  const out = $('out'); out.innerHTML = '';
-  out.appendChild(el('h2', null, title));
-  if (note) out.appendChild(el('div', 'metanote', note));
-  if (table) { const w = el('div', 'wrap'); w.appendChild(table); out.appendChild(w); }
-}
-
-// =====================================================================================
-// Global search — instant client-side filter across every rostered MLB player
-// =====================================================================================
-
-let currentIndex = new Map(); // pid -> {id,name,pos,team,teamId}, used by the player modal
-let rosterState = null;       // {team, year, rows} — cached so column-header sorts don't refetch
-let searchState = null;       // {query, teamGroups, total, limit} — same, for search results
-let sortState = { table: null, key: null, dir: 1 };
-
-function renderSearchResults(query) {
-  const q = query.trim().toLowerCase();
-  if (!q) { searchState = null; renderDirectory($('division').value); return; }
-  currentView = 'search';
-  setTeamBadge(null);
-  const matches = allPlayers.filter(p => p.name.toLowerCase().includes(q));
-  say('');
-  if (!matches.length) { searchState = null; addTable(`Search — "${query}"`, null, 'No players matched that search.'); return; }
-
-  const LIMIT = 80;
-  const shown = matches.slice(0, LIMIT);
-  const byTeam = new Map();
-  shown.forEach(p => {
-    if (!byTeam.has(p.teamId)) byTeam.set(p.teamId, []);
-    byTeam.get(p.teamId).push(p);
-  });
-  const teamGroups = [...byTeam.entries()]
-    .map(([tid, players]) => ({ team: teamsById.get(tid), players }))
-    .sort((a, b) => (a.team ? a.team.name : '').localeCompare(b.team ? b.team.name : ''));
-
-  searchState = { query, teamGroups, total: matches.length, limit: LIMIT };
-  sortState = { table: 'search', key: null, dir: 1 };
-  paintSearch();
-}
-
-function paintSearch() {
-  if (!searchState) return;
-  const { query, teamGroups, total, limit } = searchState;
-  currentIndex = new Map();
-  const table = el('table', 'players');
-  const thead = el('thead'); const hr = el('tr');
-  hr.appendChild(sortableTh('#', 'number', 'search'));
-  hr.appendChild(sortableTh('Name', 'name', 'search'));
-  hr.appendChild(sortableTh('Pos', 'pos', 'search'));
-  hr.appendChild(sortableTh('Team', 'teamName', 'search'));
-  thead.appendChild(hr); table.appendChild(thead);
-  const tbody = el('tbody');
-  const active = sortState.table === 'search' ? sortState : null;
-  teamGroups.forEach(({ team, players }) => {
-    const trG = el('tr', 'group');
-    const tdG = el('td', null, team ? team.name : 'Unknown Team'); tdG.colSpan = 4;
-    trG.appendChild(tdG); tbody.appendChild(trG);
-    const rows = active && active.key ? sortRows(players, active.key, active.dir)
-                                       : [...players].sort((a, b) => a.name.localeCompare(b.name));
-    rows.forEach(p => {
-      currentIndex.set(String(p.id), { id: p.id, name: p.name, pos: p.pos, team: p.teamName, teamId: p.teamId });
-      const tr = el('tr'); tr.dataset.pid = p.id;
-      tr.appendChild(el('td', 'num', p.number));
-      tr.appendChild(el('td', 'name', p.name));
-      tr.appendChild(el('td', null, p.pos));
-      tr.appendChild(el('td', null, p.teamName));
-      tbody.appendChild(tr);
-    });
-  });
-  table.appendChild(tbody);
-  addTable(`Search — "${query}"`, table, total > limit ? `Showing first ${limit} of ${total} matches — refine your search to narrow it down.` : '');
-}
-
-// =====================================================================================
-// Player modal — timeframe pills (Full Season / Last 7 / 14 / 30 days), hitting + pitching
-// =====================================================================================
-
-const TF = [
-  ['season', 'FULL SEASON'],
-  ['7', 'LAST 7 DAYS'],
-  ['14', 'LAST 14 DAYS'],
-  ['30', 'LAST 30 DAYS'],
-  ['vl', 'VS LEFTIES'],
-  ['vr', 'VS RIGHTIES'],
-];
-const isSplitTf = tf => tf === 'vl' || tf === 'vr';
-let modalPid = null, modalRow = null, modalTf = 'season';
-let modalBat = null, modalPit = null;  // currently-loaded stat objects for the active timeframe
-
-// K% (strikeout rate) isn't a field the API hands back pre-computed, but every stat shape we use —
-// season, byDateRange, and the vs-L/R splits — carries the raw counts to derive it ourselves.
-const kPct = (k, denom) => denom ? (k / denom * 100).toFixed(1) + '%' : '–';
+function closeModal() { $('modalBackdrop').hidden = true; }
 
 function statGrid(pairs) {
   return `<div class="stat-grid">` + pairs.map(([k, v]) =>
-    `<div class="cell"><div class="v">${v != null && v !== '' ? v : '–'}</div><div class="k">${k}</div></div>`).join('') + `</div>`;
+    `<div class="cell"><div class="v">${v}</div><div class="k">${k}</div></div>`).join('') + `</div>`;
 }
+
+// our own series-long sums (BAT_SUM / PIT shape) → a hits-for-AB line, a slash line, and a counting-stat grid
+function seriesBattingBlock(sums) {
+  const line = `${avg(sums)} / ${obpStr(sums)} / ${rate(sums.totalBases, sums.atBats)} / ${opsStr(sums)}`;
+  return `<div class="modal-hitline">${sums.hits}-for-${sums.atBats}</div>`
+    + `<div class="modal-line">${line} <span style="color:var(--dim);font-weight:400">AVG/OBP/SLG/OPS</span></div>`
+    + statGrid([['HR', sums.homeRuns], ['RBI', sums.rbi], ['BB', sums.baseOnBalls],
+                ['K', sums.strikeOuts], ['SB', sums.stolenBases], ['HBP', sums.hitByPitch]]);
+}
+function seriesPitchingBlock(sums) {
+  return `<div class="modal-line">${ip(sums.outs)} IP · ${era(sums)} ERA</div>`
+    + statGrid([['H', sums.hits], ['R', sums.runs], ['ER', sums.earnedRuns], ['BB', sums.baseOnBalls],
+                ['K', sums.strikeOuts], ['HR', sums.homeRuns]]);
+}
+// MLB stats-API season objects already carry formatted rate stats
 function apiBattingBlock(st) {
-  if (!st) return `<div class="modal-empty">No hitting stats for this range.</div>`;
-  const cells = [['HR', st.homeRuns], ['RBI', st.rbi], ['BB', st.baseOnBalls],
-                 ['K', st.strikeOuts], ['SB', st.stolenBases], ['HBP', st.hitByPitch],
-                 ['K%', kPct(st.strikeOuts, st.plateAppearances)]];
+  if (!st) return `<div class="modal-empty">No season batting stats.</div>`;
   return `<div class="modal-hitline">${st.hits}-for-${st.atBats}</div>`
     + `<div class="modal-line">${st.avg} / ${st.obp} / ${st.slg} / ${st.ops} <span style="color:var(--dim);font-weight:400">AVG/OBP/SLG/OPS</span></div>`
-    + statGrid(cells);
+    + statGrid([['HR', st.homeRuns], ['RBI', st.rbi], ['BB', st.baseOnBalls],
+                ['K', st.strikeOuts], ['SB', st.stolenBases], ['HBP', st.hitByPitch]]);
 }
 function apiPitchingBlock(st) {
-  if (!st) return `<div class="modal-empty">No pitching stats for this range.</div>`;
+  if (!st) return `<div class="modal-empty">No season pitching stats.</div>`;
   return `<div class="modal-line">${st.inningsPitched} IP · ${st.era} ERA · ${st.wins}-${st.losses}</div>`
     + statGrid([['WHIP', st.whip], ['K', st.strikeOuts], ['BB', st.baseOnBalls],
-                ['SV', st.saves], ['ER', st.earnedRuns], ['K%', kPct(st.strikeOuts, st.battersFaced)]]);
-}
-// vs-lefties/vs-righties pitching splits come back as a "batters faced" line, not a game record —
-// no ERA, no W-L, no saves (those aren't a real concept split by opposing-batter handedness).
-function apiPitchingSplitBlock(st) {
-  if (!st) return `<div class="modal-empty">No pitching stats for this range.</div>`;
-  return `<div class="modal-hitline">${st.hits}-for-${st.atBats} allowed</div>`
-    + `<div class="modal-line">${st.inningsPitched} IP · ${st.whip} WHIP · ${st.avg} BAA</div>`
-    + statGrid([['K', st.strikeOuts], ['BB', st.baseOnBalls], ['HR', st.homeRuns],
-                ['H', st.hits], ['BF', st.battersFaced], ['K%', kPct(st.strikeOuts, st.battersFaced)]]);
+                ['SV', st.saves], ['ER', st.earnedRuns], ['G', st.gamesPlayed]]);
 }
 
-function fmtDate(d) { return `${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}/${d.getFullYear()}`; }
-function dateRangeForDays(n) {
-  const end = new Date(); const start = new Date(); start.setDate(start.getDate() - n);
-  return { startDate: fmtDate(start), endDate: fmtDate(end) };
-}
-// group is 'hitting' | 'pitching' | omitted — the vs-L/R label reads differently depending on
-// which side of the ball it's describing (a hitter faces LHP, a pitcher faces LHB)
-function tfLabel(tf, year, group) {
-  if (tf === 'season') return `${year} SEASON`;
-  if (tf === 'vl') return group === 'pitching' ? 'VS LHB' : 'VS LHP';
-  if (tf === 'vr') return group === 'pitching' ? 'VS RHB' : 'VS RHP';
-  return `LAST ${tf} DAYS`;
+async function seasonStat(pid, group, year) {
+  const d = await jc(`${API}/people/${pid}/stats?stats=season&season=${year}&group=${group}`);
+  const sec = (d.stats || [])[0];
+  return sec && sec.splits.length ? sec.splits[0].stat : null;
 }
 
-async function fetchStat(pid, group, tf, year) {
+// Every tab pullable for a lower third. 'series' only makes sense once a series has actually
+// been played (filtered out in openPlayerModal for an upcoming one). vsL/vsR relabel per
+// discipline (a hitter sees "vs LHP", a pitcher sees "vs LHB") — also handled in openPlayerModal.
+const SPLITS = [
+  ['series', 'This Series'],
+  ['season', 'Full Season'],
+  ['l7', 'Last Week'],
+  ['l14', 'Last 2 Weeks'],
+  ['l30', 'Last 30 Days'],
+  ['month', 'This Month'],
+  ['asb', 'Since All-Star Break'],
+  ['vsL', 'vs LHP'],
+  ['vsR', 'vs RHP'],
+];
+
+function dateRangeFor(key) {
+  const end = new Date(), fmt = d => d.toISOString().slice(0, 10);
+  if (key.startsWith('custom:')) return { startDate: key.slice(7), endDate: fmt(end) };
+  const start = new Date(end);
+  if (key === 'l7') start.setDate(start.getDate() - 7);
+  else if (key === 'l14') start.setDate(start.getDate() - 14);
+  else if (key === 'l30') start.setDate(start.getDate() - 30);
+  else if (key === 'month') start.setDate(1);
+  return { startDate: fmt(start), endDate: fmt(end) };
+}
+
+// group: 'hitting' | 'pitching'. splitKey: one of SPLITS' first column.
+async function fetchSplitStat(pid, group, splitKey, year) {
+  const base = `${API}/people/${pid}/stats?season=${year}&group=${group}`;
   let url;
-  if (tf === 'season') {
-    url = `${API}/people/${pid}/stats?stats=season&season=${year}&group=${group}`;
-  } else if (isSplitTf(tf)) {
-    url = `${API}/people/${pid}/stats?stats=statSplits&sitCodes=${tf}&season=${year}&group=${group}`;
-  } else {
-    const { startDate, endDate } = dateRangeForDays(+tf);
-    url = `${API}/people/${pid}/stats?stats=byDateRange&startDate=${startDate}&endDate=${endDate}&season=${year}&group=${group}`;
-  }
+  if (splitKey === 'season') url = `${base}&stats=season`;
+  else if (splitKey === 'asb') url = `${base}&stats=sinceLastAllStarGame`;
+  else if (splitKey === 'vsL' || splitKey === 'vsR') url = `${base}&stats=statSplits&sitCodes=${splitKey === 'vsL' ? 'vl' : 'vr'}`;
+  else { const { startDate, endDate } = dateRangeFor(splitKey); url = `${base}&stats=byDateRange&startDate=${startDate}&endDate=${endDate}`; }
   const d = await jc(url);
   const sec = (d.stats || [])[0];
-  return sec && sec.splits && sec.splits.length ? sec.splits[0].stat : null;
+  return sec && sec.splits.length ? sec.splits[0].stat : null;
 }
 
-function wantsBatting(row) { return row.pos !== 'P'; }
-function wantsPitching(row) { return row.pos === 'P' || row.pos === 'TWP'; }
+// K%/BB% aren't in the raw counting stats — both need the plate-appearance (or batters-faced)
+// denominator the MLB stat objects already carry.
+const pct = (n, d) => d ? Math.round(n / d * 100) + '%' : '—';
+const kRate = (st, pa) => pct(+st.strikeOuts || 0, +st[pa] || 0);
+const bbRate = (st, pa) => pct(+st.baseOnBalls || 0, +st[pa] || 0);
 
 async function openPlayerModal(pid) {
   const row = currentIndex.get(String(pid));
   if (!row) return;
-  modalPid = pid; modalRow = row; modalTf = 'season';
+  modalPid = pid;
   $('modalDlNote').textContent = '';
   $('modalHeadshot').src = headshotURL(pid);
   $('modalName').textContent = row.name;
   $('modalSub').textContent = [row.pos, row.team].filter(Boolean).join(' · ');
+  const isPitcher = indexMode === 'played' ? !!row.pit && !row.bat : !!row.pitching && !row.hitting;
+  const tabs = indexMode === 'played' ? SPLITS : SPLITS.filter(([k]) => k !== 'series');
+  modalSplitKey = indexMode === 'played' ? 'series' : 'season';
+  $('modalSplit').innerHTML = tabs.map(([k]) => {
+    const text = splitDisplayName(k, isPitcher);
+    return `<button type="button" class="modal-split-btn${k === modalSplitKey ? ' active' : ''}" data-split="${k}">${text}</button>`;
+  }).join('') + `<input type="date" id="modalCustomDate" class="modal-split-date" max="${new Date().toISOString().slice(0, 10)}"
+    title="Pull stats since a specific date" value="${lastCustomDate}">`;
+  $('modalSplit').onclick = e => {
+    const b = e.target.closest('.modal-split-btn'); if (!b) return;
+    modalSplitKey = b.dataset.split;
+    $('modalSplit').querySelectorAll('.modal-split-btn').forEach(x => x.classList.toggle('active', x === b));
+    $('modalCustomDate').classList.remove('active');
+    pushSplit(pid, modalSplitKey);
+  };
+  $('modalCustomDate').onchange = e => {
+    if (!e.target.value) return;
+    lastCustomDate = e.target.value;
+    modalSplitKey = 'custom:' + e.target.value;
+    $('modalSplit').querySelectorAll('.modal-split-btn').forEach(x => x.classList.remove('active'));
+    e.target.classList.add('active');
+    pushSplit(pid, modalSplitKey);
+  };
   $('modalBackdrop').hidden = false;
-  paintTfPills();
-  await loadModalStats();
-}
-
-function paintTfPills() {
-  const box = $('tfPills'); box.innerHTML = '';
-  TF.forEach(([key, label]) => {
-    const b = el('button', 'tf-pill' + (key === modalTf ? ' on' : ''), label);
-    b.type = 'button';
-    b.onclick = () => { modalTf = key; paintTfPills(); loadModalStats(); };
-    box.appendChild(b);
-  });
-}
-
-async function loadModalStats() {
-  const pid = modalPid, row = modalRow, tf = modalTf;
-  const year = $('season').value;
-  $('modalBody').innerHTML = `<div class="modal-empty">Loading ${tfLabel(tf, year).toLowerCase()}…</div>`;
-  const doBat = wantsBatting(row), doPit = wantsPitching(row);
-  const [bat, pit] = await Promise.all([
-    doBat ? fetchStat(pid, 'hitting', tf, year).catch(() => null) : Promise.resolve(null),
-    doPit ? fetchStat(pid, 'pitching', tf, year).catch(() => null) : Promise.resolve(null),
-  ]);
-  if (modalPid !== pid || modalTf !== tf) return; // selection changed mid-flight
-  modalBat = bat; modalPit = pit;
 
   const parts = [];
-  if (doBat) parts.push([`${tfLabel(tf, year, 'hitting')} · Hitting`, apiBattingBlock(bat)]);
-  if (doPit) parts.push([`${tfLabel(tf, year, 'pitching')} · Pitching`, isSplitTf(tf) ? apiPitchingSplitBlock(pit) : apiPitchingBlock(pit)]);
-  $('modalBody').innerHTML = parts.length
-    ? parts.map(([t, html]) => `<div class="modal-section"><h3>${t}</h3>${html}</div>`).join('')
-    : `<div class="modal-empty">No stats available for this range.</div>`;
-
-  $('modalDownloadBat').hidden = !(bat && +bat.atBats > 0);
-  $('modalDownloadPit').hidden = !(pit && (+pit.outs > 0 || +pit.battersFaced > 0 || +pit.gamesPlayed > 0));
-
-  autoPushOnAir();
+  if (indexMode === 'played') {
+    if (row.bat) parts.push(['Series', seriesBattingBlock(row.bat)]);
+    if (row.pit) parts.push(['Series', seriesPitchingBlock(row.pit)]);
+    $('modalBody').innerHTML = parts.map(([t, html]) => `<div class="modal-section"><h3>${t}</h3>${html}</div>`).join('')
+      + `<div class="modal-section" id="modalSeason"><h3>${playerYear} Season</h3><div class="modal-empty">Loading…</div></div>`;
+    const groups = [];
+    if (row.bat) groups.push('hitting');
+    if (row.pit) groups.push('pitching');
+    const results = await Promise.all(groups.map(g => seasonStat(pid, g, playerYear).catch(() => null)));
+    if (currentIndex.get(String(pid)) !== row) return;  // series changed while this was in flight
+    const html = groups.map((g, i) => g === 'hitting' ? apiBattingBlock(results[i]) : apiPitchingBlock(results[i])).join('');
+    const sec = $('modalSeason'); if (sec) sec.innerHTML = `<h3>${playerYear} Season</h3>${html || '<div class="modal-empty">No data.</div>'}`;
+  } else {
+    // preview mode: h2h vs this opponent + full season, both already loaded
+    ['hitting','pitching'].forEach(gr => {
+      if (!row[gr]) return;
+      const a = row[gr].a, b = row[gr].b;
+      parts.push([`Vs opponent this season`, gr === 'hitting' ? apiBattingBlock(a) : apiPitchingBlock(a)]);
+      parts.push([`${playerYear} season · all`, gr === 'hitting' ? apiBattingBlock(b) : apiPitchingBlock(b)]);
+    });
+    $('modalBody').innerHTML = parts.length
+      ? parts.map(([t, html]) => `<div class="modal-section"><h3>${t}</h3>${html}</div>`).join('')
+      : `<div class="modal-empty">No stats available yet.</div>`;
+  }
 }
 
-function closeModal() { $('modalBackdrop').hidden = true; }
 
-// =====================================================================================
-// Broadcast graphic: a lower-third PNG, drawn on canvas so it needs no external assets
-// =====================================================================================
+// ---- broadcast graphic: a lower-third PNG, drawn on canvas so it needs no external assets ----
 
-function battingGraphicData(st, label) {
-  if (!st) return null;
-  const cells = [['AVG', st.avg], ['OBP', st.obp], ['SLG', st.slg], ['OPS', st.ops], ['HR', st.homeRuns], ['RBI', st.rbi],
-                 ['K%', kPct(st.strikeOuts, st.plateAppearances)]];
-  return { label, hitLine: `${st.hits}-for-${st.atBats}`, cells };
-}
-function pitchingGraphicData(st, label) {
-  if (!st) return null;
-  return { label, hitLine: `${st.gamesPlayed || 0} G${st.gamesStarted ? ' · ' + st.gamesStarted + ' GS' : ''}`, cells: [
-    ['ERA', st.era], ['WHIP', st.whip], ['IP', st.inningsPitched], ['K', st.strikeOuts], ['BB', st.baseOnBalls],
-    ['W-L', `${st.wins}-${st.losses}`], ['K%', kPct(st.strikeOuts, st.battersFaced)] ] };
-}
-// vs-L/R pitching splits have no ERA/W-L/saves (not a real concept for that split), so swap in
-// what the API actually gives us: IP/WHIP/K/BB plus the opposing batting line (BAA/HR)
-function pitchingSplitGraphicData(st, label) {
-  if (!st) return null;
-  return { label, hitLine: `${st.battersFaced || 0} BF`, cells: [
-    ['IP', st.inningsPitched], ['WHIP', st.whip], ['K', st.strikeOuts], ['BB', st.baseOnBalls], ['BAA', st.avg],
-    ['HR', st.homeRuns], ['K%', kPct(st.strikeOuts, st.battersFaced)] ] };
+// Pull the most broadcast-relevant stat line for whichever player/mode is on screen.
+// Batting counting stats are dynamic: anything the player actually did (HR, RBI, R, SB, HBP) shows up;
+// an 0-for-4 with no extra-base stuff falls back to the familiar HR/RBI pair so it still reads clean.
+function notableBattingCells(s) {
+  const candidates = [['HR', +s.homeRuns || 0], ['RBI', +s.rbi || 0], ['R', +s.runs || 0],
+                       ['SB', +s.stolenBases || 0], ['HBP', +s.hitByPitch || 0]];
+  const nonzero = candidates.filter(([, v]) => v > 0);
+  return nonzero.length ? nonzero : candidates.slice(0, 2);
 }
 
+function seriesGraphicData(row) {
+  if (indexMode !== 'played') return null;  // an upcoming series hasn't happened yet — nothing to pull
+  const splitLabel = row.oppAbbr ? `Series vs. ${row.oppAbbr}` : 'Series';
+  if (row.bat) return { label: splitLabel, splitLabel, hitLine: `${row.bat.hits}-for-${row.bat.atBats}`, cells: [
+    ['AVG', avg(row.bat)], ['OBP', obpStr(row.bat)], ['SLG', rate(row.bat.totalBases, row.bat.atBats)],
+    ['OPS', opsStr(row.bat)], ...notableBattingCells(row.bat) ] };
+  if (row.pit) return { label: splitLabel, splitLabel, cells: [
+    ['IP', ip(row.pit.outs)], ['ER', row.pit.earnedRuns], ['H', row.pit.hits],
+    ['BB', row.pit.baseOnBalls], ['K', row.pit.strikeOuts], ['HR', row.pit.homeRuns],
+    ['Pit', row.pit.pitchesThrown] ] };
+  return null;
+}
+
+// Any split besides the plain full season always goes through fetchSplitStat, even in preview
+// mode where the plain season stat is already preloaded — no point special-casing just that one.
+// vs LHP/RHP for a hitter is vs LHB/RHB for a pitcher — same sitCode, different label
+function splitDisplayName(splitKey, isPitcher) {
+  if (splitKey === 'vsL') return isPitcher ? 'vs LHB' : 'vs LHP';
+  if (splitKey === 'vsR') return isPitcher ? 'vs RHB' : 'vs RHP';
+  if (splitKey.startsWith('custom:')) return `Since ${mmdd(splitKey.slice(7))}`;
+  return SPLITS.find(([k]) => k === splitKey)[1];
+}
+
+async function seasonGraphicData(row, pid, splitKey = 'season') {
+  let bat = null, pit = null;
+  const wantBat = indexMode === 'played' ? !!row.bat : !!row.hitting;
+  const wantPit = indexMode === 'played' ? !!row.pit : !!row.pitching;
+  if (splitKey === 'season' && indexMode !== 'played') {
+    bat = row.hitting && row.hitting.b;
+    pit = row.pitching && row.pitching.b;
+  } else {
+    if (wantBat) bat = await fetchSplitStat(pid, 'hitting', splitKey, playerYear).catch(() => null);
+    if (wantPit) pit = await fetchSplitStat(pid, 'pitching', splitKey, playerYear).catch(() => null);
+  }
+  if (bat) {
+    const splitName = splitDisplayName(splitKey, false);
+    // vs a specific handedness the sample's small enough that HR is worth showing even at zero —
+    // the dynamic notable-stat picker is for a single series, not a full-season platoon split
+    const extra = (splitKey === 'vsL' || splitKey === 'vsR')
+      ? [['HR', +bat.homeRuns || 0], ['RBI', +bat.rbi || 0]]
+      : notableBattingCells(bat);
+    const cells = [['AVG', bat.avg], ['OBP', bat.obp], ['SLG', bat.slg], ['OPS', bat.ops],
+      ['K%', kRate(bat, 'plateAppearances')], ['BB%', bbRate(bat, 'plateAppearances')], ...extra];
+    return { label: `${playerYear} · ${splitName}`, splitLabel: splitName, hitLine: `${bat.hits}-for-${bat.atBats}`, cells };
+  }
+  if (pit) {
+    const splitName = splitDisplayName(splitKey, true);
+    return { label: `${playerYear} · ${splitName}`, splitLabel: splitName, cells: [
+      ['IP', pit.inningsPitched], ['ERA', pit.era], ['WHIP', pit.whip], ['W-L', `${pit.wins}-${pit.losses}`],
+      ['K%', kRate(pit, 'battersFaced')], ['BB%', bbRate(pit, 'battersFaced')] ] };
+  }
+  return null;
+}
+
+// Loads an image and proves it won't taint the canvas before we commit to using it —
+// some CDNs omit CORS headers, and we'd rather ship a graphic without a photo than fail the export.
 function loadSafeImage(src) {
   return new Promise(resolve => {
     const img = new Image();
@@ -737,6 +727,8 @@ function loadSafeImage(src) {
   });
 }
 
+// Draws the shared lower-third layout for whatever stat line is passed in, returns the canvas
+// plus whether the headshot actually made it in (so the caller can note a CORS fallback).
 async function renderLowerThird(data, row, pid) {
   await Promise.all([
     document.fonts.load('64px Anton'),
@@ -745,6 +737,9 @@ async function renderLowerThird(data, row, pid) {
   ]);
   const img = await loadSafeImage(headshotURL(pid));
 
+  // Full 1920x1080 broadcast-safe canvas, transparent everywhere except the bar itself, which
+  // sits at the same bottom-anchored spot as the live OBS display (?display=1) — import this PNG
+  // once as a full-canvas source in OBS and it always lands in the same place, no repositioning.
   const CW = 1920, CH = 1080, W = 1920, H = 200, BOTTOM_MARGIN = 60;
   const canvas = document.createElement('canvas'); canvas.width = CW; canvas.height = CH;
   const ctx = canvas.getContext('2d');
@@ -771,59 +766,80 @@ async function renderLowerThird(data, row, pid) {
   }
   ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.lineWidth = 5; ctx.strokeStyle = '#F5F7FA'; ctx.stroke();
 
-  const nx = 226;
+  const nx = 226, divX = 560;
   ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
-  ctx.fillStyle = '#F5F7FA'; ctx.font = '62px Anton';
-  ctx.fillText(row.name.toUpperCase(), nx, 124);
+  ctx.fillStyle = '#F5F7FA';
+  // the name column is narrower now that the stats reclaimed some of its width — shrink long
+  // names down rather than letting them run into the divider
+  let nameSize = 62;
+  ctx.font = `${nameSize}px Anton`;
+  const nameMaxW = divX - nx - 20;
+  while (nameSize > 36 && ctx.measureText(row.name.toUpperCase()).width > nameMaxW)
+    ctx.font = `${nameSize -= 2}px Anton`;
+  ctx.fillText(row.name.toUpperCase(), nx, 100);
   ctx.fillStyle = '#93a5c2'; ctx.font = '700 20px "Sofia Sans Extra Condensed"';
-  ctx.fillText([row.pos, row.team].filter(Boolean).join('  ·  ').toUpperCase(), nx, 156);
+  ctx.fillText([row.pos, row.team].filter(Boolean).join('  ·  ').toUpperCase(), nx, 130);
 
-  const divX = 800;
   ctx.strokeStyle = '#26426e'; ctx.lineWidth = 2;
   ctx.beginPath(); ctx.moveTo(divX, 34); ctx.lineTo(divX, H - 34); ctx.stroke();
 
   const startX = divX + 30, avail = W - 30 - startX;
-  const cellW = Math.min(150, avail / data.cells.length);
-  const groupW = cellW * data.cells.length, groupStart = startX + (avail - groupW) / 2;
-
-  // split label (e.g. "LAST 30 DAYS") in white, the counting line (e.g. "12-FOR-72") faded next to it
-  const splitText = data.label ? data.label.toUpperCase() : '';
-  const subText = data.hitLine ? data.hitLine.toUpperCase() : '';
-  if (splitText) {
-    let fs = 26;
-    const measure = size => {
-      ctx.font = `800 ${size}px "Sofia Sans Extra Condensed"`;
-      const w1 = ctx.measureText(splitText).width;
-      ctx.font = `700 ${size}px "Sofia Sans Extra Condensed"`;
-      const w2 = subText ? ctx.measureText('   ·   ' + subText).width : 0;
-      return w1 + w2;
-    };
-    while (fs > 14 && measure(fs) > groupW) fs -= 1;
-    const totalW = measure(fs);
-    let x = groupStart + groupW / 2 - totalW / 2;
+  // split name (white, e.g. "LAST 30 DAYS") and the hits-for-AB count (faded, e.g. "12-FOR-72")
+  // sit side by side above the stat cells — either can be absent (series has no split; a
+  // pitcher's split has no hits-for-AB) and the other still centers correctly on its own
+  if (data.splitLabel || data.hitLine) {
+    ctx.font = '700 22px "Sofia Sans Extra Condensed"';
+    const parts = [];
+    if (data.splitLabel) parts.push({ text: data.splitLabel.toUpperCase(), color: '#F5F7FA' });
+    if (data.hitLine) parts.push({ text: data.hitLine.toUpperCase(), color: '#93a5c2' });
+    const sep = '   ·   ';
+    const widths = parts.map(p => ctx.measureText(p.text).width);
+    const sepW = ctx.measureText(sep).width;
+    let x = startX + avail / 2 - (widths.reduce((a, b) => a + b, 0) + sepW * (parts.length - 1)) / 2;
     ctx.textAlign = 'left';
-    ctx.font = `800 ${fs}px "Sofia Sans Extra Condensed"`;
-    ctx.fillStyle = '#F5F7FA';
-    ctx.fillText(splitText, x, 44);
-    x += ctx.measureText(splitText).width;
-    if (subText) {
-      ctx.font = `700 ${fs}px "Sofia Sans Extra Condensed"`;
-      ctx.fillStyle = '#93a5c2';
-      ctx.fillText('   ·   ' + subText, x, 44);
-    }
+    parts.forEach((p, i) => {
+      ctx.fillStyle = p.color; ctx.fillText(p.text, x, 26); x += widths[i];
+      if (i < parts.length - 1) { ctx.fillStyle = '#93a5c2'; ctx.fillText(sep, x, 26); x += sepW; }
+    });
   }
-  const valueSize = data.cells.length > 6 ? 68 : 80, labelSize = data.cells.length > 6 ? 22 : 26;
+  // Size the whole row together (not cell-by-cell) so every stat stays the same scale, and
+  // shrink only as far as needed to keep it on one line — then space the cells like flex's
+  // space-between: edge to edge, using every pixel of room instead of clustering with margin
+  // left over. Each cell's own footprint is the wider of its value or its label.
+  const cellWidths = size => {
+    const ls = Math.round(size * 0.32);
+    return data.cells.map(([label, value]) => {
+      ctx.font = `800 ${size}px "Sofia Sans Extra Condensed"`;
+      const vw = ctx.measureText(String(value)).width;
+      ctx.font = `700 ${ls}px "Sofia Sans Extra Condensed"`;
+      const lw = ctx.measureText(label).width;
+      return Math.max(vw, lw);
+    });
+  };
+  let valueSize = 85, widths = cellWidths(valueSize);
+  while (valueSize > 40 && widths.reduce((a, b) => a + b, 0) > avail) {
+    widths = cellWidths(valueSize -= 4);
+  }
+  const labelSize = Math.max(16, Math.round(valueSize * 0.32));
+  const n = data.cells.length, totalContent = widths.reduce((a, b) => a + b, 0);
+  const MAX_GAP = 100;
+  let gapEach = n > 1 ? (avail - totalContent) / (n - 1) : 0;
+  let cellX = startX;
+  if (gapEach > MAX_GAP) {
+    // too few/narrow stats to justify spreading edge to edge — cluster with a normal gap and
+    // center the tighter group instead, rather than stranding cells far apart
+    gapEach = MAX_GAP;
+    const groupW = totalContent + gapEach * (n - 1);
+    cellX = startX + (avail - groupW) / 2;
+  }
   data.cells.forEach(([label, value], i) => {
-    const x = groupStart + i * cellW + cellW / 2;
+    const x = cellX + widths[i] / 2;
     ctx.textAlign = 'center';
-    ctx.fillStyle = '#F5F7FA';
-    let vs = valueSize;
-    ctx.font = `800 ${vs}px "Sofia Sans Extra Condensed"`;
-    while (vs > 26 && ctx.measureText(String(value)).width > cellW - 10)
-      ctx.font = `800 ${vs -= 2}px "Sofia Sans Extra Condensed"`;
-    ctx.fillText(String(value), x, H / 2 + 16);
+    ctx.fillStyle = '#F5F7FA'; ctx.font = `800 ${valueSize}px "Sofia Sans Extra Condensed"`;
+    ctx.fillText(String(value), x, H / 2 + 22);
     ctx.fillStyle = '#93a5c2'; ctx.font = `700 ${labelSize}px "Sofia Sans Extra Condensed"`;
-    ctx.fillText(label, x, H / 2 + 50);
+    ctx.fillText(label, x, H / 2 + 44);
+    cellX += widths[i] + gapEach;
   });
 
   ctx.textAlign = 'right'; ctx.fillStyle = 'rgba(255,255,255,.35)'; ctx.font = '700 14px "Sofia Sans Extra Condensed"';
@@ -834,19 +850,20 @@ async function renderLowerThird(data, row, pid) {
 
 // ---- on-air: push a player's stat line to the OBS display view (control side) ----
 
-let onAirPid = null, onAirKind = null;
+let onAirPid = null, onAirSplit = 'series';
 
-function pushOnAir(pid, kind, row, data) {
+function pushOnAir(pid, row, data, splitKey) {
   if (!row || !data) return;
-  onAirPid = pid; onAirKind = kind;
-  const payload = { pid, kind, name: row.name, pos: row.pos, team: row.team, data, ts: Date.now() };
+  const kind = splitKey === 'series' ? 'series' : 'season';
+  onAirPid = pid; onAirSplit = splitKey;
+  const payload = { pid, kind, splitKey, name: row.name, pos: row.pos, team: row.team, data, ts: Date.now() };
   try { localStorage.setItem(LT_KEY, JSON.stringify(payload)); } catch {}
   if (ltChannel) ltChannel.postMessage(payload);
   updateOnAirUI(payload);
 }
 
 function clearOnAir() {
-  onAirPid = onAirKind = null;
+  onAirPid = null; onAirSplit = 'series';
   try { localStorage.removeItem(LT_KEY); } catch {}
   if (ltChannel) ltChannel.postMessage({ clear: true });
   updateOnAirUI(null);
@@ -858,83 +875,81 @@ function updateOnAirUI(payload) {
   if (payload) $('onairText').innerHTML = `On air: <b>${payload.name}</b> · ${payload.data.label}`;
 }
 
-// Whenever the modal opens or the timeframe changes, auto-push whichever line is primary
-// (hitting for position players, pitching for pitchers) so the OBS bar always tracks what's on screen.
-function autoPushOnAir() {
-  if (!modalPid || !modalRow) return;
-  const year = $('season').value;
-  const pitFn = isSplitTf(modalTf) ? pitchingSplitGraphicData : pitchingGraphicData;
-  if (wantsPitching(modalRow) && !wantsBatting(modalRow)) {
-    const data = pitFn(modalPit, tfLabel(modalTf, year, 'pitching'));
-    if (data) pushOnAir(modalPid, 'pit', modalRow, data);
-  } else {
-    const batData = battingGraphicData(modalBat, tfLabel(modalTf, year, 'hitting'));
-    const data = batData || pitFn(modalPit, tfLabel(modalTf, year, 'pitching'));
-    if (data) pushOnAir(modalPid, data === batData ? 'bat' : 'pit', modalRow, data);
+// Clicking a tab shows up on the display right away — same fetch downloadGraphic does, just
+// without the canvas/PNG work, since most tab clicks are someone browsing rather than about to
+// hit download. Guards against a stale modal (closed, or switched to a different player) landing
+// a late fetch on the wrong on-air line. "This Series" is already loaded, so that one's instant.
+async function pushSplit(pid, splitKey) {
+  const row = currentIndex.get(String(pid));
+  if (!row || pid !== modalPid) return;
+  const note = $('modalDlNote');
+  if (splitKey === 'series') {
+    const data = seriesGraphicData(row);
+    if (data) { pushOnAir(pid, row, data, 'series'); note.textContent = ''; }
+    else note.textContent = 'No series stats available.';
+    return;
   }
+  const isPitcher = indexMode === 'played' ? !!row.pit && !row.bat : !!row.pitching && !row.hitting;
+  note.textContent = 'Updating display…';
+  const data = await seasonGraphicData(row, pid, splitKey).catch(() => null);
+  if (pid !== modalPid || modalSplitKey !== splitKey) return;  // modal moved on while this was in flight
+  if (data) { pushOnAir(pid, row, data, splitKey); note.textContent = ''; }
+  else note.textContent = `No ${splitDisplayName(splitKey, isPitcher).toLowerCase()} stats available.`;
 }
 
-// matches the CSS transition duration on .lt-bar, so a player-to-player swap fades the old one
-// fully out before the new content is painted and faded back in — never an instant content pop
-const LT_FADE_MS = 350;
-let ltFadeTimer = null;
-let ltVisible = false;
-
-function paintOnAirBar(payload) {
-  const { name, pos, team, data } = payload;
-  $('ltHeadshot').src = headshotURL(payload.pid);
-  $('ltName').textContent = name.toUpperCase();
-  $('ltSub').textContent = [pos, team].filter(Boolean).join('  ·  ').toUpperCase();
-  const hitEl = $('ltHitline');
-  const splitText = data.label ? data.label.toUpperCase() : '';
-  const subText = data.hitLine ? data.hitLine.toUpperCase() : '';
-  hitEl.innerHTML = splitText ? `<span class="split">${splitText}</span>${subText ? '  ·  ' + subText : ''}` : '';
-  hitEl.style.display = splitText ? '' : 'none';
-  $('ltCells').innerHTML = data.cells.map(([label, value]) =>
-    `<div class="lt-cell"><div class="v">${value}</div><div class="k">${label}</div></div>`).join('');
-  sizeCells(data.cells.length);
-  $('ltBar').classList.add('lt-visible');
-  ltVisible = true;
-}
+// ---- OBS display view (?display=1): renders whatever the control page last pushed, and keeps
+// itself current — the control page re-pushes on every live-refresh tick while a game is in progress ----
 
 function renderOnAirBar(payload) {
   const bar = $('ltBar');
   if (!bar) return;
-  clearTimeout(ltFadeTimer);
-
-  if (!payload) {
-    bar.classList.remove('lt-visible');  // fades out via the CSS transition, content stays as-is underneath
-    ltVisible = false;
-    return;
+  if (!payload) { bar.hidden = true; return; }
+  const { name, pos, team, data } = payload;
+  bar.hidden = false;
+  $('ltHeadshot').src = headshotURL(payload.pid);
+  $('ltName').textContent = name.toUpperCase();
+  $('ltSub').textContent = [pos, team].filter(Boolean).join('  ·  ').toUpperCase();
+  const hitEl = $('ltHitline');
+  const bits = [
+    data.splitLabel ? `<span class="lt-splitlabel">${data.splitLabel.toUpperCase()}</span>` : '',
+    data.hitLine ? `<span class="lt-hitcount">${data.hitLine.toUpperCase()}</span>` : '',
+  ].filter(Boolean);
+  hitEl.innerHTML = bits.join('  ·  ');
+  hitEl.style.display = bits.length ? '' : 'none';
+  const cellsEl = $('ltCells');
+  // measure the real space instead of assuming a fixed width — an assumption that doesn't match
+  // the actual rendered container is exactly what let cells wrap to a second line before
+  const availW = cellsEl.parentElement.clientWidth || 1300;
+  // Size the whole row together (not cell-by-cell) so every stat stays the same scale, and
+  // shrink only as far as needed to keep it on one line — space-between (in CSS) then spreads
+  // the now-content-sized cells edge to edge, using every pixel of room instead of clustering
+  // with margin left over.
+  let valueSize = 85;
+  cellsEl.innerHTML = data.cells.map(([label, value]) =>
+    `<div class="lt-cell">
+       <div class="v" style="font-size:${valueSize}px">${value}</div>
+       <div class="k" style="font-size:${Math.round(valueSize * 0.32)}px">${label}</div>
+     </div>`).join('');
+  while (valueSize > 40 && cellsEl.scrollWidth > availW) {
+    valueSize -= 4;
+    cellsEl.querySelectorAll('.v').forEach(v => v.style.fontSize = valueSize + 'px');
+    cellsEl.querySelectorAll('.k').forEach(k => k.style.fontSize = Math.round(valueSize * 0.32) + 'px');
   }
-
-  if (ltVisible) {
-    // already on screen with someone else — fade that out first, then swap content and fade the new one in
-    bar.classList.remove('lt-visible');
-    ltFadeTimer = setTimeout(() => paintOnAirBar(payload), LT_FADE_MS);
+  // too few/narrow stats to justify spreading edge to edge (a pitcher's short series line, say)
+  // — cluster with a normal gap and center the tighter group instead of stranding cells far apart
+  const cells = [...cellsEl.querySelectorAll('.lt-cell')];
+  const totalContent = cells.reduce((a, c) => a + c.offsetWidth, 0);
+  const n = cells.length, MAX_GAP = 100;
+  const idealGap = n > 1 ? (availW - totalContent) / (n - 1) : 0;
+  if (idealGap > MAX_GAP) {
+    cellsEl.style.justifyContent = 'center';
+    cellsEl.style.gap = MAX_GAP + 'px';
   } else {
-    paintOnAirBar(payload);
+    cellsEl.style.justifyContent = 'space-between';
+    cellsEl.style.gap = '0px';
   }
 }
 
-// Shrinks each stat cell (width + font) to whatever fits the available bar width in one row —
-// mirrors the shrink-to-fit the canvas PNG export already does, so the live OBS bar never wraps
-// to a second line no matter how many cells a timeframe adds.
-function sizeCells(n) {
-  const wrap = $('ltCells');
-  if (!wrap || !n) return;
-  const avail = wrap.clientWidth || n * 150;
-  const w = Math.max(64, Math.min(150, Math.floor(avail / n)));
-  const tight = w < 130, veryTight = w < 90;
-  const valueFs = veryTight ? 30 : tight ? 38 : 54;
-  const keyFs = veryTight ? 11 : tight ? 13 : 17;
-  wrap.querySelectorAll('.lt-cell').forEach(cell => {
-    cell.style.width = w + 'px';
-    const v = cell.querySelector('.v'), k = cell.querySelector('.k');
-    if (v) v.style.fontSize = valueFs + 'px';
-    if (k) k.style.fontSize = keyFs + 'px';
-  });
-}
 
 function initDisplay() {
   try {
@@ -948,27 +963,35 @@ function initDisplay() {
   });
 }
 
-async function downloadGraphic(kind) {  // kind: 'bat' | 'pit'
-  const pid = modalPid, row = modalRow;
-  const btn = $(kind === 'bat' ? 'modalDownloadBat' : 'modalDownloadPit'), note = $('modalDlNote');
-  if (!row) return;
-  const year = $('season').value;
-  const pitFn = isSplitTf(modalTf) ? pitchingSplitGraphicData : pitchingGraphicData;
-  const data = kind === 'bat' ? battingGraphicData(modalBat, tfLabel(modalTf, year, 'hitting'))
-                               : pitFn(modalPit, tfLabel(modalTf, year, 'pitching'));
-  if (!data) { note.textContent = `No ${kind === 'bat' ? 'hitting' : 'pitching'} stats available to build a graphic yet.`; return; }
+// Build the graphic for the open player, whichever tab was active. The download always completes
+// even if the modal's moved on by the time the fetch resolves, but the on-air push is skipped in
+// that case — a finished download shouldn't retroactively hijack the live display.
+async function buildGraphic(pid, row, splitKey) {
+  const data = splitKey === 'series' ? seriesGraphicData(row) : await seasonGraphicData(row, pid, splitKey);
+  if (!data) return null;
+  if (pid === modalPid) pushOnAir(pid, row, data, splitKey);
+  return renderLowerThird(data, row, pid);
+}
 
-  btn.disabled = true; note.textContent = `Building graphic…`;
+async function downloadGraphic() {
+  const pid = modalPid, row = currentIndex.get(String(pid)), splitKey = modalSplitKey;
+  const isPitcher = indexMode === 'played' ? !!row.pit && !row.bat : !!row.pitching && !row.hitting;
+  const label = splitDisplayName(splitKey, isPitcher);
+  const btn = $('modalDownload'), note = $('modalDlNote');
+  if (!row) return;
+
+  btn.disabled = true; note.textContent = `Building ${label} graphic…`;
   try {
-    pushOnAir(pid, kind, row, data);
-    const { canvas, hadPhoto } = await renderLowerThird(data, row, pid);
+    const built = await buildGraphic(pid, row, splitKey);
+    if (!built) { note.textContent = `No ${label.toLowerCase()} stats available to build a graphic yet.`; return; }
+    const { canvas, hadPhoto } = built;
     const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
     if (!blob) throw new Error('Canvas export failed');
     const a = el('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `${row.name.replace(/[^\w\d]+/g, '-')}-${kind}-${modalTf}-lower-third.png`;
+    a.download = `${row.name.replace(/[^\w\d]+/g, '-')}-${splitKey.replace(/[^\w\d]+/g, '-')}-lower-third.png`;
     a.click(); URL.revokeObjectURL(a.href);
-    note.textContent = hadPhoto ? 'Pushed to OBS + downloaded ✓' : 'Pushed to OBS + downloaded ✓ (headshot host blocked embedding — graphic saved without it)';
+    note.textContent = hadPhoto ? 'Downloaded ✓' : 'Downloaded ✓ (headshot host blocked embedding — graphic saved without it)';
   } catch (e) {
     note.textContent = 'Could not build the graphic: ' + e.message;
   } finally {
@@ -976,85 +999,923 @@ async function downloadGraphic(kind) {  // kind: 'bat' | 'pit'
   }
 }
 
-// =====================================================================================
-// Wiring
-// =====================================================================================
 
-const guard = fn => (...a) => Promise.resolve(fn(...a)).catch(e => say(e.message, true));
+async function loadSeries() {
+  const y = $('season').value, id = teamId();
+  $('series').innerHTML = '<option>—</option>'; $('out').innerHTML = '';
+  setMatchup(null);
+  say('Loading schedule…');
+  const d = await j(`${API}/schedule?sportId=1&teamId=${id}&season=${y}&gameType=R,F,D,L,W&hydrate=probablePitcher`);
+  const games = d.dates.flatMap(x => x.games)
+    .filter(g => g.status.codedGameState !== 'D')  // postponed: no box score, no future date either
+    .sort((a,b) => (a.officialDate + a.gameNumber).localeCompare(b.officialDate + b.gameNumber));
 
-let searchDebounce = null;
-$('find').oninput = () => {
-  clearTimeout(searchDebounce);
-  const q = $('find').value;
-  searchDebounce = setTimeout(() => guard(async () => renderSearchResults(q))(), 150);
-};
+  const all = [];
+  for (const g of games) {
+    const home = g.teams.home.team.id === id;
+    const opp = home ? g.teams.away.team : g.teams.home.team;
+    // regular season: a series is one venue, so home/away splits it. Postseason: whole round is one series.
+    const key = opp.id + g.gameType + (g.gameType === 'R' ? (home ? 'H' : 'A') : '');
+    const last = all[all.length-1];
+    if (last && last.key === key) last.games.push(g);
+    else all.push({ key, home, opp, games: [g], type: g.gameType });
+  }
+  // F=final, O=game over, I=in progress — anything else hasn't produced a box score yet
+  all.forEach(s => {
+    s.played = s.games.filter(g => 'FOI'.includes(g.status.codedGameState));
+    s.future = !s.played.length;
+  });
+  series = all;  // chronological, opening day → end of season
 
-$('division').onchange = () => {
-  const dv = $('division').value;
-  populateTeamSelect(dv);
-  $('team').value = '';
-  $('find').value = '';
-  renderDirectory(dv);
+  if (!series.length) { say('No games for that season.'); return; }
+  $('series').innerHTML = series.map((s, i) => {
+    const g = s.future ? s.games : s.played;
+    const a = g[0].officialDate, b = g[g.length-1].officialDate;
+    const dates = a === b ? mmdd(a) : mmdd(a) + '–' + mmdd(b);
+    const tag = s.future ? ' ▸ UPCOMING'
+              : s.type === 'R' ? '' : ' [' + ({F:'WC',D:'DS',L:'CS',W:'WS'}[s.type] || s.type) + ']';
+    const at = s.type === 'R' ? (s.home ? 'vs' : '@') : 'vs';
+    return `<option value="${i}">${dates} ${at} ${s.opp.name} (${g.length})${tag}</option>`;
+  }).join('');
+  // open on the latest played series — the boundary between past and upcoming
+  $('series').value = Math.max(0, series.findLastIndex(s => !s.future));
+  render();
+}
+
+function say(msg, isErr) { $('status').textContent = msg; $('status').className = isErr ? 'err' : ''; $('status').style.display = msg ? '' : 'none'; }
+
+async function render() {
+  const sel = series[+$('series').value];
+  if (!sel) return;
+  setMatchup(sel.opp.id, sel.opp.name);
+  $('out').innerHTML = ''; $('viewchips').innerHTML = '';
+  paintFn = null;
+  clearTimeout(liveTimer); liveTimer = null;  // dropped if the new selection has nothing live; re-armed below
+  if (sel.future) return renderPreview(sel);
+  const s = { ...sel, games: sel.played };  // drop any not-yet-played game in a live series
+  say(`Loading ${s.games.length} box score${s.games.length>1?'s':''}…`);
+  const boxes = await Promise.all(s.games.map(g => j(`${API}/game/${g.gamePk}/boxscore`)));
+  const skipped = sel.games.length - s.games.length;
+  const live = s.games.some(g => g.status.codedGameState === 'I');
+  say([skipped ? `${skipped} game${skipped>1?'s':''} in this series not played yet.` : '',
+       live && LIVE_REFRESH ? `Live — updated ${new Date().toLocaleTimeString()}, refreshing every ${LIVE_MS/1000}s` : '']
+      .filter(Boolean).join(' · '));
+
+  paintFn = () => paintPlayed(s, boxes);
+  repaint();
+  armLive(sel);
+}
+
+function paintPlayed(s0, allBoxes) {
+  // Hiding a game collapses its columns to a thin 1-col stub — it never leaves the table, so
+  // there's always something right there to click back open. Sums are still built from every
+  // box score regardless (see below), so a collapsed game still counts toward every total.
+  const gLabels = s0.games.map((g, i) => 'G' + (i + 1));
+  const shownIdx = gLabels.map((l, i) => i).filter(i => !hset('game').has(gLabels[i]));
+  const s = { ...s0, games: s0.games, gidx: s0.games.map((_, i) => i), gtotal: s0.games.length };
+
+  // Yankees always render first; the 'away' slot below just means "first section"
+  const t0 = allBoxes[0].teams;
+  const teamsMeta = t0.home.team.id === teamId() ? [t0.home.team, t0.away.team]
+                                                : [t0.away.team, t0.home.team];
+  const slots = [0, 1].filter(ti => !hset('team').has(teamsMeta[ti].name));
+
+  chipRow('Games', gLabels, 'game');
+  chipRow('Teams', teamsMeta.map(t => t.name), 'team');
+  chipRow('Batting', [...BAT.map(c => c[1]), 'AVG', 'OBP', 'SLG', 'OPS', 'GIDP'], 'bat');
+  chipRow('Pitching', [...PIT.map(c => c[1]), 'ERA'], 'pit');
+  chipRow('Pitcher usage', [...PITG.map(c => c[1]), 'ERA'], 'pitg');
+  chipRow('Team batting', TEAM_BAT_ROWS.map(r => r[0]), 'tbat');
+  chipRow('Team pitching', TEAM_PIT_ROWS.map(r => r[0]), 'tpit');
+
+  indexMode = 'played';
+  playerYear = $('season').value;
+  currentIndex = new Map();
+
+  if (!slots.length) {
+    addTable('Nothing to show', null, 'Both teams are hidden. Turn one back on above.');
+    return;
+  }
+
+  // players[slot] = Map(personId → {name, pos, order, pIdx, g:{gi:stats}, bat:{sums}, pit:{sums}})
+  // teamGames[slot][gi] = flat raw team line (summable; rates derived from these)
+  // gi is the game's index in the FULL series, so hidden games still count toward the sums
+  const players = { away: new Map(), home: new Map() };
+  const teamGames = { away: [], home: [] };
+  allBoxes.forEach((b, gi) => SD.forEach(sd => {
+    const T = b.teams[sd];
+    // if a team flips home/away across the series, follow team id, not the slot
+    const slot = T.team.id === teamsMeta[0].id ? 'away' : 'home';
+    teamGames[slot][gi] = teamLine(T);
+    const map = players[slot];
+    Object.values(T.players).forEach(p => {
+      const st = p.stats || {};
+      if (!filled(st.batting) && !filled(st.pitching)) return;
+      let row = map.get(p.person.id);
+      if (!row) {
+        row = { id: p.person.id, name: p.person.fullName, pos: p.position?.abbreviation || '',
+                ord: { gi: -1, slot: 9999 }, pIdx: 999, g: {}, bat: null, pit: null };
+        map.set(p.person.id, row);
+      }
+      // batting order from the most recent game the player hit in. battingOrder is "400" for the
+      // cleanup starter and "401" for whoever replaced him, so subs slot in behind their starter.
+      if (p.battingOrder && gi >= row.ord.gi) row.ord = { gi, slot: +p.battingOrder };
+      const pi = T.pitchers.indexOf(p.person.id);
+      if (pi >= 0) row.pIdx = Math.min(row.pIdx, gi * 100 + pi);
+      row.g[gi] = st;
+      if (filled(st.batting)) row.bat = sum(row.bat, st.batting, BAT_SUM);
+      if (filled(st.pitching)) {
+        row.pit = sum(row.pit, st.pitching, PIT_SUM);
+        row.gs = (row.gs || 0) + (+st.pitching.gamesStarted || 0);  // splits starters from relievers
+      }
+    });
+  }));
+
+  if (anyShown('bat', [...BAT.map(c => c[1]), 'AVG', 'OBP', 'OPS']))
+    addTable('Batting', buildTable('bat', shown('bat', BAT), s, players, teamsMeta, slots));
+  if (anyShown('pit', [...PIT.map(c => c[1]), 'ERA']))
+    addTable('Pitching', buildTable('pit', shown('pit', PIT), s, players, teamsMeta, slots));
+
+  const pgCols = shown('pitg', PITG), pgERA = !hset('pitg').has('ERA');
+  if (pgCols.length || pgERA) {
+    // a hidden game loses its block here — there's no column to fold it into
+    if (shownIdx.length) addTable('Pitchers by Game', buildPitByGame(gameBlocks(allBoxes, s0.games, shownIdx, teamsMeta, slots), pgCols, pgERA));
+    addTable('Pitchers by Role', buildPitBlocks(roleBlocks(players, teamsMeta, slots), pgCols, pgERA));
+  }
+
+  const tb = shown('tbat', TEAM_BAT_ROWS, 0), tp = shown('tpit', TEAM_PIT_ROWS, 0);
+  if (tb.length) addTable('Team Batting', buildTeamTable(s, teamGames, teamsMeta, 'bat', tb, 'SERIES', slots));
+  if (tp.length) addTable('Team Pitching', buildTeamTable(s, teamGames, teamsMeta, 'pit', tp, 'SERIES', slots));
+
+  SD.forEach((sd, ti) => players[sd].forEach((row, pid) =>
+    currentIndex.set(String(pid), { ...row, team: teamsMeta[ti].name, oppAbbr: teamsMeta[ti === 0 ? 1 : 0].abbreviation })));
+  applyFilter();  // a name typed in Find survives a series change
+  paintSortLight();
+}
+
+// ---- pitching organised by who was used, game by game (mirrors the scoresheet's per-game blocks) ----
+
+const PITG = [['outs','IP'],['hits','H'],['runs','R'],['earnedRuns','ER'],['baseOnBalls','BB'],
+              ['strikeOuts','K'],['homeRuns','HR'],['pitchesThrown','Pit']];
+const PIT_SUM = [...PIT, ['pitchesThrown','Pit']];   // Pit is only shown in the usage tables, but always summed
+
+// G3 · Aug 2 · W 9-5, from the Yankees' point of view
+const gLabel = (g, n) => {
+  const home = g.teams.home, away = g.teams.away;
+  const me = home.team.id === teamId() ? home : away, opp = me === home ? away : home;
+  const wl = me.score > opp.score ? 'W' : me.score < opp.score ? 'L' : 'T';
+  const live = g.status.codedGameState === 'I';
+  return `G${n} · ${mmdd(g.officialDate)} · ${live ? 'LIVE' : wl} ${me.score}-${opp.score}`;
 };
-$('goHome').onclick = () => {
-  $('division').value = '';
-  populateTeamSelect('');
-  $('team').value = '';
-  $('find').value = '';
-  currentTeamId = null;
-  renderDirectory();
-};
-$('team').onchange = () => {
-  const id = $('team').value;
-  $('find').value = '';
-  if (id) guard(loadRoster)(+id);
-  else renderDirectory($('division').value);
-};
-$('season').onchange = guard(async () => {
-  await Promise.all([loadTeams($('season').value), loadPlayerIndex($('season').value)]);
-  if (currentView === 'roster' && currentTeamId) guard(loadRoster)(currentTeamId);
-  else renderDirectory($('division').value);
-});
+const teamSide = (b, meta) => b.teams.away.team.id === meta.id ? b.teams.away : b.teams.home;
+const noteCls = n => /^\(W/.test(n) ? 'w' : /^\(L/.test(n) ? 'l' : 'live';   // W/L/S+H/BS colouring
+
+// one entry per (visible) game, each with both teams' pitcher lines ready to sit side by side.
+// ti === 0 is always the Yankees slot (teamsMeta[0]) — everything else is the opponent.
+function gameBlocks(allBoxes, allGames, gidx, teamsMeta, slots) {
+  return gidx.map(gi => ({
+    gLabel: gLabel(allGames[gi], gi + 1),
+    teams: slots.map(ti => {
+      const T = teamSide(allBoxes[gi], teamsMeta[ti]);
+      return {
+        key: `G${gi + 1} — ${teamsMeta[ti].name}`, label: teamsMeta[ti].name, opp: ti !== 0,
+        rows: T.pitchers.map(id => {
+          const p = T.players['ID' + id], st = (p.stats && p.stats.pitching) || {};
+          return { id, name: p.person.fullName, note: st.note || '', st };
+        })
+      };
+    })
+  }));
+}
+
+// starters vs bullpen over the whole series, per team
+function roleBlocks(players, teamsMeta, slots) {
+  return slots.map(ti => ({
+    label: teamsMeta[ti].name, total: 'ALL PITCHERS',
+    rows: [['STARTERS', r => r.gs], ['RELIEVERS', r => !r.gs]].map(([lbl, f]) => {
+      const g = [...players[SD[ti]].values()].filter(r => r.pit).filter(f);
+      return g.length ? { name: lbl, st: g.reduce((a, r) => sum(a, r.pit, PIT_SUM), null) } : null;
+    }).filter(Boolean)
+  })).filter(b => b.rows.length);
+}
+
+// blocks: [{label, total, rows:[{name, note, st}]}] — st is any object with the PITG keys
+function buildPitBlocks(blocks, cols, withERA) {
+  const table = el('table', 'players');
+  table.dataset.tbl = 'pitg';
+  // sorting here is within each game's block — the whole point of the table is who came in when
+  const act = sortActive('pitg');
+  if (act) {
+    const c = cols.find(([, l]) => l === act.stat);
+    const v = r => act.stat === 'ERA' ? sortNum(era(r.st)) : (c ? +r.st[c[0]] || 0 : null);
+    blocks = blocks.map(b => ({ ...b, rows: [...b.rows].sort(sortCmp(act.dir, v)) }));
+  }
+  const thead = el('thead'), hr = el('tr');
+  hr.appendChild(el('th', 'name', 'Pitcher'));
+  cols.forEach(([, lbl], i) => hr.appendChild(withStat(el('th', i === 0 ? 'gstart' : '', lbl), lbl)));
+  if (withERA) hr.appendChild(withStat(el('th', 'tot tothead', 'ERA'), 'ERA'));
+  thead.appendChild(hr); table.appendChild(thead);
+
+  const width = cols.length + (withERA ? 1 : 0);
+  const statCells = (tr, st, extra) => {
+    cols.forEach(([k, lbl], i) => tr.appendChild(withStat(
+      el('td', 'num' + (i === 0 ? ' gstart' : '') + extra + (+st[k] === 0 ? ' z' : ''), cell(k, st)), lbl)));
+    if (withERA) tr.appendChild(withStat(el('td', 'num tot', era(st)), 'ERA'));
+  };
+
+  const tbody = el('tbody');
+  blocks.forEach(b => {
+    const trT = el('tr', 'team');
+    trT.appendChild(el('td', 'name', b.label));
+    const fill = el('td'); fill.colSpan = width; trT.appendChild(fill);
+    tbody.appendChild(trT);
+    b.rows.forEach(r => {
+      const tr = el('tr');
+      if (r.id) tr.dataset.pid = r.id;
+      const td = el('td', 'name');
+      td.appendChild(document.createTextNode(r.name + ' '));
+      if (r.note) td.appendChild(el('span', 'note ' + noteCls(r.note), r.note));
+      tr.appendChild(td);
+      statCells(tr, r.st, '');
+      tbody.appendChild(tr);
+    });
+    if (b.rows.length > 1) {
+      const tr = el('tr', 'sum');
+      tr.appendChild(el('td', 'name', b.total || 'TOTAL'));
+      statCells(tr, b.rows.reduce((a, r) => sum(a, r.st, cols), null), '');
+      tbody.appendChild(tr);
+    }
+  });
+  table.appendChild(tbody);
+  return table;
+}
+
+// ---- Pitchers by Game, side by side: one row per game, each team its own compact panel that
+// collapses independently — clicking a panel's header hides just its rows, not the other team's ----
+
+const collapsedPitTeams = new Set();   // team.key of whichever panels the user closed
+
+function pitTeamTable(team, cols, withERA) {
+  const table = el('table', 'players');
+  table.dataset.tbl = 'pitg';
+  const thead = el('thead'), hr = el('tr');
+  hr.appendChild(el('th', 'name', 'Pitcher'));
+  cols.forEach(([, lbl], i) => hr.appendChild(withStat(el('th', i === 0 ? 'gstart' : '', lbl), lbl)));
+  if (withERA) hr.appendChild(withStat(el('th', 'tot tothead', 'ERA'), 'ERA'));
+  thead.appendChild(hr); table.appendChild(thead);
+
+  const statCells = (tr, st) => {
+    cols.forEach(([k, lbl], i) => tr.appendChild(withStat(
+      el('td', 'num' + (i === 0 ? ' gstart' : '') + (+st[k] === 0 ? ' z' : ''), cell(k, st)), lbl)));
+    if (withERA) tr.appendChild(withStat(el('td', 'num tot', era(st)), 'ERA'));
+  };
+
+  const tbody = el('tbody');
+  team.rows.forEach(r => {
+    const tr = el('tr');
+    if (r.id) tr.dataset.pid = r.id;
+    const td = el('td', 'name');
+    td.appendChild(document.createTextNode(r.name + ' '));
+    if (r.note) td.appendChild(el('span', 'note ' + noteCls(r.note), r.note));
+    tr.appendChild(td);
+    statCells(tr, r.st);
+    tbody.appendChild(tr);
+  });
+  if (team.rows.length > 1) {
+    const tr = el('tr', 'sum');
+    tr.appendChild(el('td', 'name', 'GAME TOTAL'));
+    statCells(tr, team.rows.reduce((a, r) => sum(a, r.st, cols), null));
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  return table;
+}
+
+function buildPitByGame(games, cols, withERA) {
+  // sorting here is shared across every panel — the whole point is who came in when, game to game
+  const act = sortActive('pitg');
+  const sortRows = rows => {
+    if (!act) return rows;
+    const c = cols.find(([, l]) => l === act.stat);
+    const v = r => act.stat === 'ERA' ? sortNum(era(r.st)) : (c ? +r.st[c[0]] || 0 : null);
+    return [...rows].sort(sortCmp(act.dir, v));
+  };
+
+  const wrap = el('div', 'pitgames');
+  games.forEach(g => {
+    const row = el('div', 'pitgame');
+    row.appendChild(el('div', 'pitgame-label', g.gLabel));
+    g.teams.forEach(team => {
+      const isClosed = collapsedPitTeams.has(team.key);
+      const panel = el('div', 'pitteam' + (team.opp ? ' opp' : '') + (isClosed ? ' closed' : ''));
+      const head = el('div', 'pitteam-head', team.label + (isClosed ? '  ▸' : '  ▾'));
+      head.title = isClosed ? `Click to show ${team.label}'s pitchers` : `Click to collapse ${team.label}'s pitchers`;
+      head.onclick = () => {
+        collapsedPitTeams.has(team.key) ? collapsedPitTeams.delete(team.key) : collapsedPitTeams.add(team.key);
+        repaint();
+      };
+      panel.appendChild(head);
+      if (!isClosed) panel.appendChild(pitTeamTable({ ...team, rows: sortRows(team.rows) }, cols, withERA));
+      row.appendChild(panel);
+    });
+    wrap.appendChild(row);
+  });
+  return wrap;
+}
+
+// "Team RISP = 2-for-17" / "Team LOB = 11" only exist in the boxscore info blocks,
+// not in teamStats (teamStats.leftOnBase is the per-batter sum, a different number).
+function teamLine(T) {
+  const f = {};
+  (T.info || []).forEach(sec => (sec.fieldList || []).forEach(x => { if (x.label) f[x.label] = x.value; }));
+  const m = /(\d+)-for-(\d+)/.exec(f['Team RISP'] || '');
+  const bat = { rispH: m ? +m[1] : 0, rispAB: m ? +m[2] : 0, lob: +(f['Team LOB'] || 0),
+                errors: +T.teamStats.fielding.errors || 0 };
+  TEAM_BAT_KEYS.forEach(k => bat[k] = +T.teamStats.batting[k] || 0);
+  const pit = { pitchers: T.pitchers.length };
+  TEAM_PIT_KEYS.forEach(k => pit[k] = +T.teamStats.pitching[k] || 0);
+  // teamStats never aggregates inherited runners (always 0) — sum the pitchers' own lines.
+  pit.inheritedRunners = pit.inheritedRunnersScored = 0;
+  T.pitchers.forEach(id => {
+    const st = T.players['ID' + id].stats.pitching || {};
+    pit.inheritedRunners += +st.inheritedRunners || 0;
+    pit.inheritedRunnersScored += +st.inheritedRunnersScored || 0;
+  });
+  return { bat, pit };
+}
+
+const TEAM_BAT_KEYS = ['atBats','runs','hits','doubles','triples','homeRuns','totalBases','baseOnBalls',
+                  'strikeOuts','hitByPitch','sacFlies','stolenBases','groundIntoDoublePlay','plateAppearances'];
+const TEAM_PIT_KEYS = ['outs','hits','runs','earnedRuns','homeRuns','baseOnBalls','hitBatsmen','strikeOuts',
+                  'battersFaced','pitchesThrown','strikes','groundOuts','airOuts','wildPitches',
+                  'inheritedRunners','inheritedRunnersScored','stolenBases','caughtStealing'];
+const rate = (n, d) => d ? (n/d).toFixed(3).replace(/^0/,'') : '.---';
+const per = (n, d, dp) => d ? (n/d).toFixed(dp) : '-';
+const obp = r => (r.hits + r.baseOnBalls + r.hitByPitch) /
+                 (r.atBats + r.baseOnBalls + r.hitByPitch + r.sacFlies || 1);
+const TEAM_BAT_ROWS = [
+  ['R', r => r.runs], ['H', r => r.hits],
+  ['2B', r => r.doubles], ['3B', r => r.triples], ['HR', r => r.homeRuns],
+  ['XBH', r => r.doubles + r.triples + r.homeRuns],
+  ['TB', r => r.totalBases],
+  ['RISP', r => `${r.rispH}-for-${r.rispAB}`],
+  ['RISP AVG', r => rate(r.rispH, r.rispAB)],
+  ['LOB', r => r.lob],
+  ['BB', r => r.baseOnBalls], ['K', r => r.strikeOuts],
+  ['SB', r => r.stolenBases], ['GIDP', r => r.groundIntoDoublePlay], ['E', r => r.errors],
+  ['AVG', r => rate(r.hits, r.atBats)],
+  ['OBP', r => rate(r.hits + r.baseOnBalls + r.hitByPitch,
+                    r.atBats + r.baseOnBalls + r.hitByPitch + r.sacFlies)],
+  ['SLG', r => rate(r.totalBases, r.atBats)],
+  ['OPS', r => (obp(r) + (r.atBats ? r.totalBases/r.atBats : 0)).toFixed(3).replace(/^0/,'')],
+];
+
+const TEAM_PIT_ROWS = [
+  ['IP', r => ip(r.outs)],
+  ['H', r => r.hits], ['R', r => r.runs], ['ER', r => r.earnedRuns], ['HR', r => r.homeRuns],
+  ['BB', r => r.baseOnBalls], ['HBP', r => r.hitBatsmen], ['K', r => r.strikeOuts],
+  ['ERA', r => per(r.earnedRuns * 27, r.outs, 2)],
+  ['WHIP', r => per((r.hits + r.baseOnBalls) * 3, r.outs, 2)],
+  ['K/9', r => per(r.strikeOuts * 27, r.outs, 1)],
+  ['BB/9', r => per(r.baseOnBalls * 27, r.outs, 1)],
+  ['K/BB', r => per(r.strikeOuts, r.baseOnBalls, 2)],
+  ['BF', r => r.battersFaced],
+  ['Pitches', r => r.pitchesThrown],
+  ['Strike%', r => rate(r.strikes, r.pitchesThrown)],
+  ['P/IP', r => per(r.pitchesThrown * 3, r.outs, 1)],
+  ['GO/AO', r => per(r.groundOuts, r.airOuts, 2)],
+  ['WP', r => r.wildPitches],
+  ['SB-CS allowed', r => `${r.stolenBases}-${r.caughtStealing}`],
+  ['Inherited scored', r => `${r.inheritedRunnersScored}-of-${r.inheritedRunners}`],
+  ['Pitchers used', r => r.pitchers],
+];
+
+function buildTeamTable(s, teamGames, teamsMeta, kind, statRows, totalLabel = 'SERIES', slots = [0, 1]) {
+  const table = el('table');
+  const thead = el('thead'), hr = el('tr');
+  hr.appendChild(el('th', 'name', 'Team'));
+  s.games.forEach((g, i) => hr.appendChild(gameHead(g, gPos(s, i) + 1, 'gstart' + gTint(i))));
+  const tt = el('th', 'tot tothead gstart');
+  tt.appendChild(el('div', 'glabel', totalLabel));
+  tt.appendChild(el('div', null, `${s.gtotal || s.games.length} G`));
+  hr.appendChild(tt);
+  thead.appendChild(hr); table.appendChild(thead);
+
+  const tbody = el('tbody');
+  slots.forEach(ti => {
+    const sd = SD[ti];
+    const trT = el('tr', 'team');
+    trT.appendChild(el('td', 'name', teamsMeta[ti].name));
+    const fill = el('td'); fill.colSpan = s.games.length + 1;
+    trT.appendChild(fill); tbody.appendChild(trT);
+
+    const all = teamGames[sd].map(g => g[kind]);
+    const total = all.reduce((a, r) => {   // whole series, hidden games included
+      Object.keys(r).forEach(k => a[k] = (a[k] || 0) + r[k]);
+      return a;
+    }, {});
+    const games = s.games.map((g, i) => all[gPos(s, i)]);
+    statRows.forEach(([label, fn]) => {
+      const tr = el('tr');
+      tr.appendChild(el('td', 'name', label));
+      games.forEach((r, i) => {
+        const n = gPos(s, i) + 1;
+        tr.appendChild(hset('game').has('G' + n)
+          ? thinCell('td', n, 'num gstart')
+          : el('td', 'num gstart' + gTint(i), String(fn(r))));
+      });
+      tr.appendChild(el('td', 'num tot gstart', String(fn(total))));
+      tbody.appendChild(tr);
+    });
+  });
+  table.appendChild(tbody);
+  return table;
+}
+
+// ---- upcoming series: season stats vs that opponent, per player ----
+
+const jCache = new Map();  // splits and rosters don't change mid-session
+const jc = u => (jCache.has(u) ? jCache.get(u) : (jCache.set(u, j(u)), jCache.get(u)));
+
+const H2H_COLS = [['gamesPlayed','G'],['atBats','AB'],['runs','R'],['hits','H'],['doubles','2B'],['triples','3B'],
+                  ['homeRuns','HR'],['rbi','RBI'],['baseOnBalls','BB'],['strikeOuts','K'],['stolenBases','SB'],
+                  ['avg','AVG'],['obp','OBP'],['slg','SLG'],['ops','OPS']];
+const SEA_COLS = [['gamesPlayed','G'],['atBats','AB'],['homeRuns','HR'],['rbi','RBI'],['avg','AVG'],['ops','OPS']];
+// a pitcher's vs-team split is the opposing batters' line against him — no IP/ERA in it
+const H2HP_COLS = [['gamesPlayed','G'],['atBats','AB'],['hits','H'],['doubles','2B'],['homeRuns','HR'],
+                   ['baseOnBalls','BB'],['strikeOuts','K'],['avg','AVG'],['obp','OBP'],['slg','SLG'],['ops','OPS']];
+const SEAP_COLS = [['gamesPlayed','G'],['inningsPitched','IP'],['era','ERA'],['whip','WHIP'],
+                   ['strikeOuts','K'],['baseOnBalls','BB'],['avg','AVG']];
+
+async function renderPreview(s) {
+  const y = $('season').value;
+  const opp = s.opp;
+  setMatchup(opp.id, opp.name);
+  const teams = [{ id: teamId(), name: teamName(), vs: opp.id }, { id: opp.id, name: opp.name, vs: teamId() }];
+
+  say('Loading rosters…');
+  const rosters = await Promise.all(teams.map(t => jc(`${API}/teams/${t.id}/roster?rosterType=active&season=${y}`)));
+  // seasonMap[teamIdx][group] = Map(personId → stat)
+  const seasonMap = await Promise.all(teams.map(async t => {
+    const [h, p] = await Promise.all(['hitting','pitching'].map(gr =>
+      jc(`${API}/stats?stats=season&group=${gr}&season=${y}&teamId=${t.id}&sportId=1&playerPool=ALL&limit=200`)));
+    return { hitting: splitMap(h), pitching: splitMap(p) };
+  }));
+
+  const people = teams.map((t, ti) => rosters[ti].roster.map(p => ({
+    id: p.person.id, name: p.person.fullName, pos: p.position.abbreviation,
+    pitcher: p.position.abbreviation === 'P' || p.position.abbreviation === 'TWP',
+    hitter: p.position.abbreviation !== 'P',
+  })));
+
+  const n = people.flat().length;
+  say(`Loading ${n} season-vs-${opp.abbreviation || 'opp'} splits…`);
+  await Promise.all(people.flatMap((roster, ti) => roster.map(async p => {
+    p.h2h = {};
+    await Promise.all([p.hitter && 'hitting', p.pitcher && 'pitching'].filter(Boolean).map(async gr => {
+      const d = await jc(`${API}/people/${p.id}/stats?stats=vsTeamTotal&opposingTeamId=${teams[ti].vs}&season=${y}&group=${gr}`);
+      const sec = (d.stats || []).find(x => x.type?.displayName === 'vsTeamTotal');
+      p.h2h[gr] = sec && sec.splits.length ? sec.splits[0].stat : null;
+    }));
+  })));
+
+  // team totals for this matchup come from every game already played against them this season
+  const priors = series.filter(x => x.opp.id === opp.id).flatMap(x => x.played);
+  let priorBoxes = [];
+  if (priors.length) {
+    say(`Loading ${priors.length} head-to-head box score${priors.length>1?'s':''}…`);
+    priorBoxes = await Promise.all(priors.map(g => jc(`${API}/game/${g.gamePk}/boxscore`)));
+  }
+  say('');
+
+  paintFn = () => paintPreview(s, y, opp, teams, people, seasonMap, priors, priorBoxes);
+  repaint();
+}
+
+function paintPreview(s, y, opp, teams, people, seasonMap, priors, priorBoxes) {
+  chipRow('Teams', teams.map(t => t.name), 'team');
+  chipRow('Hitters · vs opp', H2H_COLS.map(c => c[1]), 'hbat');
+  chipRow('Hitters · season', SEA_COLS.map(c => c[1]), 'sbat');
+  chipRow('Pitchers · vs opp', H2HP_COLS.map(c => c[1]), 'hpit');
+  chipRow('Pitchers · season', SEAP_COLS.map(c => c[1]), 'spit');
+  chipRow('Team batting', TEAM_BAT_ROWS.map(r => r[0]), 'tbat');
+  chipRow('Team pitching', TEAM_PIT_ROWS.map(r => r[0]), 'tpit');
+
+  // probable pitchers, when the API has posted them
+  addTable(`Upcoming · ${teamName()} ${s.home ? 'vs' : '@'} ${opp.name}`, null,
+    s.games.map((g, i) => {
+      const pa = g.teams.away.probablePitcher, ph = g.teams.home.probablePitcher;
+      const arm = pa || ph ? ` — ${pa ? pa.fullName : 'TBD'} vs ${ph ? ph.fullName : 'TBD'}` : '';
+      return `G${i+1} · ${mmdd(g.officialDate)}  ${g.teams.away.team.name} @ ${g.teams.home.team.name}${arm}`;
+    }).join('\n'));
+
+  indexMode = 'preview'; playerYear = y;
+  currentIndex = new Map();
+  [['hitting', shown('hbat', H2H_COLS), shown('sbat', SEA_COLS), 'Hitters'],
+   ['pitching', shown('hpit', H2HP_COLS), shown('spit', SEAP_COLS), 'Pitchers']].forEach(([gr, aCols, bCols, title]) => {
+    if (!aCols.length && !bCols.length) return;
+    const sections = teams.map((t, ti) => ({
+      name: t.name,
+      hidden: hset('team').has(t.name),
+      rows: people[ti]
+        .filter(p => gr === 'hitting' ? p.hitter : p.pitcher)
+        .map(p => ({ p, a: p.h2h[gr], b: seasonMap[ti][gr].get(p.id) }))
+        .filter(r => r.a || r.b)
+        .sort((x, y) => (+(y.a?.atBats) || 0) - (+(x.a?.atBats) || 0) ||
+                        (+(y.b?.atBats) || 0) - (+(x.b?.atBats) || 0))
+        .map(r => {
+          const rec = currentIndex.get(String(r.p.id)) || { id: r.p.id, name: r.p.name, pos: r.p.pos, team: t.name };
+          rec[gr] = { a: r.a, b: r.b };
+          currentIndex.set(String(r.p.id), rec);
+          return { id: r.p.id, name: r.p.name, pos: r.p.pos,
+                   cells: [...aCols.map(([k]) => val(r.a, k)), ...bCols.map(([k]) => val(r.b, k))] };
+        })
+    }));
+    const table = buildStrTable(
+      [{ label: 'SEASON VS OPPONENT', cols: aCols.map(c => c[1]) },
+       { label: `${y} SEASON · ALL`, cols: bCols.map(c => c[1]) }],
+      sections.filter(sec => !sec.hidden), title === 'Hitters' ? 'Player' : 'Pitcher', gr);
+    addTable(`${title} — season vs series opponent`, table,
+      people.flat().some(p => p.h2h[gr]) ? '' : `These teams have not met yet in ${y} — head-to-head columns are empty.`);
+  });
+
+  paintTeamBlocks(opp, y, priors, priorBoxes);
+  applyFilter();  // a name typed in Find survives a series change
+  paintSortLight();
+}
+
+// Same Team Batting / Team Pitching tables as a played series, but the columns are
+// every game already played against this opponent this season.
+function paintTeamBlocks(opp, y, priors, boxes) {
+  if (!priors.length) {
+    addTable('Team Batting & Pitching', null,
+      `No games against ${opp.name} yet in ${y}, so there are no team totals to show.`);
+    return;
+  }
+  const t0 = boxes[0].teams;
+  const teamsMeta = t0.home.team.id === teamId() ? [t0.home.team, t0.away.team]
+                                                 : [t0.away.team, t0.home.team];
+  const teamGames = { away: [], home: [] };
+  boxes.forEach((b, gi) => ['away','home'].forEach(sd => {
+    const T = b.teams[sd];
+    teamGames[T.team.id === teamsMeta[0].id ? 'away' : 'home'][gi] = teamLine(T);
+  }));
+  const ss = { games: priors };
+  const slots = [0, 1].filter(ti => !hset('team').has(teamsMeta[ti].name));
+  if (!slots.length) return;
+  [['bat', shown('tbat', TEAM_BAT_ROWS, 0), 'Team Batting'],
+   ['pit', shown('tpit', TEAM_PIT_ROWS, 0), 'Team Pitching']].forEach(([kind, rows, title]) => {
+    if (!rows.length) return;
+    addTable(`${title} — ${y} vs ${opp.name}`,
+      buildTeamTable(ss, teamGames, teamsMeta, kind, rows, 'SEASON VS ' + opp.name.toUpperCase(), slots));
+  });
+}
+
+const splitMap = d => new Map(((d.stats || [])[0]?.splits || []).map(sp => [sp.player.id, sp.stat]));
+const val = (st, k) => st && st[k] != null && st[k] !== '' ? String(st[k]) : '–';
+
+// generic layout for pre-formatted string cells: column groups over player rows, sectioned by team
+function buildStrTable(allGroups, sections, firstColLabel, tbl) {
+  const groups = allGroups.filter(g => g.cols.length);   // a fully-hidden column group leaves no header
+  const table = el('table', 'players'), thead = el('thead'), r1 = el('tr'), r2 = el('tr');
+  table.dataset.tbl = tbl;
+  const nameTh = el('th', 'name', firstColLabel); nameTh.rowSpan = 2; r1.appendChild(nameTh);
+  const width = groups.reduce((a, g) => a + g.cols.length, 0);
+  const flatAt = (gi, ci) => groups.slice(0, gi).reduce((a, g) => a + g.cols.length, 0) + ci;
+  groups.forEach((g, gi) => {
+    const th = el('th', 'gstart' + (gi ? ' tot tothead' : '')); th.colSpan = g.cols.length;
+    th.appendChild(el('div', 'glabel', g.label));
+    r1.appendChild(th);
+    g.cols.forEach((lbl, ci) => {
+      const c = withStat(el('th', (ci === 0 ? 'gstart ' : '') + (gi ? 'tot' : ''), lbl), lbl);
+      c.dataset.gi = gi;   // which column group, so the same label in both groups sorts independently
+      r2.appendChild(c);
+    });
+  });
+  thead.append(r1, r2); table.appendChild(thead);
+
+  // cells are already-formatted strings, so sort on the parsed value of the clicked column
+  const act = sortActive(tbl);
+  if (act) {
+    const gi = groups.findIndex((g, i) => i === act.gi && g.cols.includes(act.stat));
+    if (gi >= 0) {
+      const at = flatAt(gi, groups[gi].cols.indexOf(act.stat));
+      sections = sections.map(s => ({ ...s, rows: [...s.rows].sort(sortCmp(act.dir, r => sortNum(r.cells[at]))) }));
+    }
+  }
+
+  const tbody = el('tbody');
+  sections.forEach(sec => {
+    const trT = el('tr', 'team');
+    trT.appendChild(el('td', 'name', sec.name));
+    const fill = el('td'); fill.colSpan = width; trT.appendChild(fill);
+    tbody.appendChild(trT);
+    sec.rows.forEach(r => {
+      const tr = el('tr');
+      tr.dataset.pid = r.id;
+      const td = el('td', 'name');
+      td.appendChild(document.createTextNode(r.name + ' '));
+      td.appendChild(el('span', 'pos', r.pos));
+      tr.appendChild(td);
+      let c = 0;
+      groups.forEach((g, gi) => g.cols.forEach((lbl, ci) => {
+        tr.appendChild(withStat(el('td', 'num' + (ci === 0 ? ' gstart' : '') + (gi ? ' tot' : ''), r.cells[c++]), lbl));
+      }));
+      tbody.appendChild(tr);
+    });
+  });
+  table.appendChild(tbody);
+  return table;
+}
+
+// column i shows the game at s.gidx[i] in the full series — every game keeps a slot (gidx is the
+// identity map now that collapsing goes thin instead of removing the column), so this mainly
+// matters for the "Pitchers by Game" blocks, which still use their own shown-only index.
+const gPos = (s, i) => s.gidx ? s.gidx[i] : i;
+const gTint = i => i % 2 ? ' gB' : ' gA';   // alternating yellow/blue column blocks, like the scoresheet
+
+// game column header: date + result from the selected team's point of view. Clicking it toggles
+// the same hide state as the "View" chips. A collapsed game doesn't leave the table — it shrinks
+// to a thin 1-column stub (still clickable, to bring it back) so it's never more than one click away.
+function gameHead(g, n, cls, fullSpan = 1) {
+  const lbl = 'G' + n;
+  const hidden = hset('game').has(lbl);
+  const th = el('th', cls + (hidden ? ' gthin' : ' gclick'));
+  th.colSpan = hidden ? 1 : fullSpan;
+  if (hidden) {
+    th.appendChild(el('div', 'gstub', lbl));
+    th.title = `Bring ${lbl} back`;
+    th.onclick = () => { hset('game').delete(lbl); repaint(); };
+    return th;
+  }
+  const home = g.teams.home, away = g.teams.away;
+  const me = home.team.id === teamId() ? home : away;
+  const opp = me === home ? away : home;
+  const wl = me.score > opp.score ? 'W' : me.score < opp.score ? 'L' : 'T';
+  const dh = g.doubleHeader !== 'N' ? ` G${g.gameNumber}` : '';
+  th.appendChild(el('div', 'glabel', `G${n} · ${mmdd(g.officialDate)}${dh}`));
+  const live = g.status.codedGameState === 'I';
+  const res = el('div', 'gres ' + (live ? 'live' : wl === 'W' ? 'w' : wl === 'L' ? 'l' : ''));
+  res.textContent = live ? `LIVE ${me.score}-${opp.score}` : `${wl} ${me.score}-${opp.score}`;
+  th.appendChild(res);
+  th.title = `Click to collapse ${lbl} — it stays part of the series totals, just out of the way`;
+  th.onclick = () => { hset('game').add(lbl); repaint(); };
+  return th;
+}
+
+// A thin, empty stub cell for a collapsed game's row — matches the header's thin column and is
+// itself clickable to restore, so the whole strip down the table brings the game back, not just
+// the header at the top.
+function thinCell(tag, n, cls) {
+  const lbl = 'G' + n;
+  const c = el(tag, (cls ? cls + ' ' : '') + 'gthin');
+  c.title = `Bring ${lbl} back`;
+  c.onclick = () => { hset('game').delete(lbl); repaint(); };
+  return c;
+}
+
+function sum(acc, st, cols) {
+  acc = acc || Object.fromEntries(cols.map(c => [c[0], 0]));
+  cols.forEach(([k]) => acc[k] += (+st[k] || 0));
+  return acc;
+}
+
+function buildTable(kind, cols, s, players, teamsMeta, slots = [0, 1]) {
+  const table = el('table', 'players');  // .players = rows are people, so the Find box filters them
+  table.dataset.tbl = kind;
+  const rates = (kind === 'bat'
+    ? [['GIDP', r => r.groundIntoDoublePlay || 0], ['AVG', avg], ['OBP', obpStr], ['SLG', slgStr], ['OPS', opsStr]]
+    : [['ERA', era]]).filter(([lbl]) => !hset(kind).has(lbl));
+  const sumCols = kind === 'bat' ? BAT_SUM : PIT_SUM;
+  const statKey = kind === 'bat' ? 'batting' : 'pitching';
+  const thead = el('thead');
+  const r1 = el('tr'), r2 = el('tr');
+  const nameTh = el('th', 'name', kind === 'bat' ? 'Player' : 'Pitcher');
+  nameTh.rowSpan = 2; r1.appendChild(nameTh);
+
+  if (cols.length) s.games.forEach((g, i) => {
+    const n = gPos(s, i) + 1;
+    const th = gameHead(g, n, 'gstart' + gTint(i), cols.length);
+    r1.appendChild(th);
+    if (hset('game').has('G' + n)) { r2.appendChild(thinCell('th', n, 'gstart')); return; }
+    // the stat-label row stays white with red type; only the game's group header carries the tint
+    cols.forEach(([, lbl], ci) => {
+      const c = withStat(el('th', ci === 0 ? 'gstart' : '', lbl), lbl);
+      c.dataset.gi = gPos(s, i);   // so clicking it sorts by that game, not the series
+      r2.appendChild(c);
+    });
+  });
+
+  const tt = el('th', 'tot tothead gstart'); tt.colSpan = cols.length + rates.length;
+  tt.appendChild(el('div', 'glabel', 'SERIES TOTAL'));
+  tt.appendChild(el('div', null, `${s.gtotal || s.games.length} G`));
+  r1.appendChild(tt);
+  cols.forEach(([, lbl], ci) => r2.appendChild(withStat(el('th', 'tot' + (ci === 0 ? ' gstart' : ''), lbl), lbl)));
+  rates.forEach(([lbl]) => r2.appendChild(withStat(el('th', 'tot' + (lbl === 'OPS' ? ' ops-strong' : ['AVG','OBP','SLG'].includes(lbl) ? ' rate-dim' : ''), lbl), lbl)));
+  thead.append(r1, r2); table.appendChild(thead);
+
+  // one bold summary line over any set of players: per-game sums, series sums, then the rates
+  const totalRow = (label, group, cls) => {
+    const tr = el('tr', 'sum' + (cls ? ' ' + cls : ''));
+    tr.appendChild(el('td', 'name', label));
+    if (cols.length) s.games.forEach((g, i) => {
+      const gi = gPos(s, i), n = gi + 1;
+      if (hset('game').has('G' + n)) { tr.appendChild(thinCell('td', n, 'num gstart')); return; }
+      const t = group.reduce((a, r) => {
+        const st = r.g[gi] && r.g[gi][statKey];
+        return filled(st) ? sum(a, st, sumCols) : a;
+      }, null);
+      cols.forEach(([k, lbl], ci) =>
+        tr.appendChild(withStat(el('td', 'num' + (ci === 0 ? ' gstart' : ''), t ? cell(k, t) : '–'), lbl)));
+    });
+    const tot = group.reduce((a, r) => sum(a, r[kind], sumCols), null);
+    cols.forEach(([k, lbl], ci) =>
+      tr.appendChild(withStat(el('td', 'num tot' + (ci === 0 ? ' gstart' : ''), cell(k, tot)), lbl)));
+    rates.forEach(([lbl, fn]) => tr.appendChild(withStat(el('td', 'num tot' + (lbl === 'OPS' ? ' ops-strong' : ['AVG','OBP','SLG'].includes(lbl) ? ' rate-dim' : ''), fn(tot)), lbl)));
+    return tr;
+  };
+
+  // clicking a stat header sorts the players by it, inside each team block
+  const act = sortActive(kind);
+  const statVal = r => {
+    const c = cols.find(([, l]) => l === act.stat);
+    if (act.gi === null) {
+      const rate = rates.find(([l]) => l === act.stat);
+      if (rate) return sortNum(rate[1](r[kind]));
+      return c ? +r[kind][c[0]] || 0 : null;
+    }
+    const st = r.g[act.gi] && r.g[act.gi][statKey];
+    return filled(st) && c ? +st[c[0]] || 0 : null;   // no appearance in that game
+  };
+
+  const tbody = el('tbody');
+  slots.forEach(ti => {
+    const sd = SD[ti];
+    const rows = [...players[sd].values()].filter(r => r[kind]);
+    // default order: hitters in the latest game's batting order (then earlier games' extras),
+    // pitchers in the order they first appeared
+    rows.sort(act ? (a, b) => sortCmp(act.dir, statVal)(a, b) || a.name.localeCompare(b.name)
+                  : kind === 'bat' ? (a,b) => b.ord.gi - a.ord.gi || a.ord.slot - b.ord.slot ||
+                                              a.name.localeCompare(b.name)
+                                   : (a,b) => a.pIdx - b.pIdx);
+    const trT = el('tr', 'team');
+    const tdT = el('td', 'name', teamsMeta[ti].name);
+    tdT.colSpan = 1; trT.appendChild(tdT);
+    const fill = el('td');
+    fill.colSpan = s.games.reduce((n, g, i) => n + (hset('game').has('G' + (gPos(s, i) + 1)) ? 1 : cols.length), 0)
+      + cols.length + rates.length;
+    trT.appendChild(fill); tbody.appendChild(trT);
+
+    // pitchers split into starters and relievers, each with its own subtotal
+    const groups = kind === 'pit'
+      ? [['STARTERS', rows.filter(r => r.gs)], ['RELIEVERS', rows.filter(r => !r.gs)]]
+      : [[null, rows]];
+
+    groups.forEach(([label, group]) => {
+      group.forEach(r => {
+        const tr = el('tr');
+        tr.dataset.pid = r.id;
+        const td = el('td', 'name');
+        td.appendChild(document.createTextNode(r.name + ' ')); // real space so CSV export doesn't run name into pos
+        td.appendChild(el('span', 'pos', r.pos));
+        tr.appendChild(td);
+        if (cols.length) s.games.forEach((g, i) => {
+          const gi = gPos(s, i), n = gi + 1;
+          if (hset('game').has('G' + n)) { tr.appendChild(thinCell('td', n, 'num gstart' + gTint(i))); return; }
+          const st = r.g[gi] && r.g[gi][statKey];
+          const has = filled(st);
+          cols.forEach(([k, lbl], ci) => {
+            const v = has ? cell(k, st) : '–';
+            const c = el('td', 'num' + (ci === 0 ? ' gstart' : '') + gTint(i) + (has && +st[k] === 0 ? ' z' : ''), v);
+            tr.appendChild(withStat(c, lbl));
+          });
+        });
+        cols.forEach(([k, lbl], ci) => tr.appendChild(withStat(el('td', 'num tot' + (ci === 0 ? ' gstart' : ''), cell(k, r[kind])), lbl)));
+        rates.forEach(([lbl, fn]) => tr.appendChild(withStat(el('td', 'num tot' + (lbl === 'OPS' ? ' ops-strong' : ['AVG','OBP','SLG'].includes(lbl) ? ' rate-dim' : ''), fn(r[kind])), lbl)));
+        tbody.appendChild(tr);
+      });
+      if (label && group.length) tbody.appendChild(totalRow(label, group, 'subsum'));
+    });
+
+    if (rows.length) tbody.appendChild(totalRow('TEAM TOTAL', rows));
+  });
+  table.appendChild(tbody);
+  return table;
+}
+
+const cell = (k, st) => k === 'outs' ? ip(+st.outs || 0) : String(+st[k] || 0);
+// stamp the stat name on a cell so clicking that column header can light up every copy of it
+const withStat = (e, lbl) => { e.dataset.stat = lbl; return e; };
+
+// ---- find + pin: filter player rows by name, click a row to keep it highlighted ----
+
+function applyFilter() {
+  // comma-separated: "rice, volpe, judge" keeps any row matching one of them
+  const terms = $('find').value.toLowerCase().split(',').map(t => t.trim()).filter(Boolean);
+  document.querySelectorAll('#out table.players tbody tr').forEach(tr => {
+    if (tr.classList.contains('team') || tr.classList.contains('sum')) return;  // keep team headers + TEAM TOTAL
+    const name = tr.cells[0].textContent.toLowerCase();
+    tr.hidden = !!terms.length && !terms.some(t => name.includes(t));
+  });
+}
+$('find').oninput = applyFilter;
 
 $('out').onclick = e => {
-  const th = e.target.closest('thead th[data-key]');
+  // a stat column header: light that stat up for everyone, in every game group and the total
+  // a stat column header: sort by it and light it up. Click again for least-first, a third time to reset.
+  const th = e.target.closest('thead th[data-stat]');
   if (th) {
-    const { key, tbl } = th.dataset;
-    const same = sortState.table === tbl && sortState.key === key;
-    sortState = { table: tbl, key, dir: same ? -sortState.dir : 1 };
-    if (tbl === 'roster') paintRoster(); else paintSearch();
+    const tbl = th.closest('table').dataset.tbl;
+    const gi = th.dataset.gi === undefined ? null : +th.dataset.gi;
+    const same = sortBy && sortBy.tbl === tbl && sortBy.stat === th.dataset.stat && sortBy.gi === gi;
+    sortBy = same ? (sortBy.dir === -1 ? { ...sortBy, dir: 1 } : null)
+                  : { tbl, stat: th.dataset.stat, gi, dir: -1 };
+    repaint();
     return;
   }
   const tr = e.target.closest('tbody tr');
-  if (!tr || tr.classList.contains('group') || !tr.dataset.pid) return;
-  openPlayerModal(tr.dataset.pid);
+  if (!tr || tr.classList.contains('team')) return;
+  const table = tr.closest('table');
+  if (table.classList.contains('players')) {
+    if (e.target.closest('td.name') && tr.dataset.pid) { openPlayerModal(tr.dataset.pid); return; }
+    if (tr.classList.contains('sum') || tr.classList.contains('subsum')) return;  // summary rows aren't a player
+    tr.classList.toggle('pick'); return;
+  }
+  // team tables: rows ARE stats, so pin that stat line for both teams at once
+  const label = tr.cells[0].textContent, on = !tr.classList.contains('pick');
+  [...table.tBodies[0].rows].forEach(r =>
+    r.classList.contains('team') || r.cells[0].textContent !== label || r.classList.toggle('pick', on));
 };
 $('modalClose').onclick = closeModal;
-$('modalDownloadBat').onclick = () => downloadGraphic('bat');
-$('modalDownloadPit').onclick = () => downloadGraphic('pit');
+$('modalDownload').onclick = downloadGraphic;
 $('modalBackdrop').onclick = e => { if (e.target.id === 'modalBackdrop') closeModal(); };
-document.onkeydown = e => { if (e.key === 'Escape' && !$('modalBackdrop').hidden) closeModal(); };
+document.onkeydown = e => {
+  if (e.key !== 'Escape') return;
+  if (!$('modalBackdrop').hidden) { closeModal(); return; }
+  document.querySelectorAll('tr.pick').forEach(tr => tr.classList.remove('pick'));
+  if (sortBy) { sortBy = null; repaint(); }
+};
+
+// ---- live refresh: repoll only while a game in the selected series is actually in progress ----
+
+const LIVE_REFRESH = true;   // in-progress games repoll on their own
+const LIVE_MS = 45000;
+let liveTimer = null;
+
+function armLive(sel) {
+  clearTimeout(liveTimer); liveTimer = null;
+  if (!LIVE_REFRESH || !sel || !(sel.played || []).some(g => g.status.codedGameState === 'I')) return;
+  liveTimer = setTimeout(() => guard(tickLive)(), LIVE_MS);
+}
+
+async function tickLive() {
+  const sel = series[+$('series').value];
+  if (!sel || !(sel.played || []).some(g => g.status.codedGameState === 'I')) return;
+  if (document.hidden && !onAirPid) return armLive(sel);  // a background tab with nothing on-air doesn't need fresh numbers
+
+  // refresh scores/status for this series' date range, patching the game objects in place
+  const a = sel.games[0].officialDate, b = sel.games[sel.games.length-1].officialDate;
+  const d = await j(`${API}/schedule?sportId=1&teamId=${teamId()}&startDate=${a}&endDate=${b}&hydrate=probablePitcher`);
+  const fresh = new Map(d.dates.flatMap(x => x.games).map(g => [g.gamePk, g]));
+  sel.games.forEach(g => {
+    const f = fresh.get(g.gamePk);
+    if (f) { g.status = f.status; g.teams = f.teams; }
+  });
+  sel.played = sel.games.filter(g => 'FOI'.includes(g.status.codedGameState));  // a game may have just started
+
+  // keep what the user was looking at: pinned rows and scroll position (sort/hide state is already kept)
+  const keep = {
+    y: window.scrollY,
+    rows: [...document.querySelectorAll('tr.pick')].map(tr => tr.cells[0].textContent),
+  };
+  await render();
+  document.querySelectorAll('#out tbody tr').forEach(tr => {
+    if (keep.rows.includes(tr.cells[0].textContent)) tr.classList.add('pick');
+  });
+  window.scrollTo(0, keep.y);
+
+  if (onAirPid) {
+    const row = currentIndex.get(String(onAirPid));
+    const data = row && (onAirSplit === 'series' ? seriesGraphicData(row) : await seasonGraphicData(row, onAirPid, onAirSplit));
+    if (row && data) pushOnAir(onAirPid, row, data, onAirSplit);
+  }
+}
+
+const guard = fn => (...a) => fn(...a).catch(e => say(e.message, true));
+$('season').onchange = guard(loadSeries);
+$('series').onchange = guard(render);
 $('openDisplay').onclick = () => {
   const url = new URL(location.href); url.searchParams.set('display', '1');
   window.open(url.href, '_blank');
 };
 $('onairClear').onclick = clearOnAir;
-$('modalExitOnAir').onclick = () => {
-  clearOnAir();
-  $('modalDlNote').textContent = 'Removed from OBS ✓';
-};
 
 const yr = new Date().getFullYear();
 if (isDisplayMode) {
   initDisplay();
 } else {
   $('season').innerHTML = Array.from({length: yr - 2013}, (_, i) => yr - i).map(y => `<option>${y}</option>`).join('');
-  guard(async () => {
-    say('Loading teams…');
-    await Promise.all([loadTeams($('season').value), loadPlayerIndex($('season').value)]);
-    say('');
-    renderDirectory();
-  })();
+  guard(loadSeries)();  // land on the most recent series of the current season
 }
 </script>
 </body>
