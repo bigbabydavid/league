@@ -208,34 +208,34 @@
   </head>
   <body>
     <header>
-        <div class="datanote" id="datanote">Data note: <b>Live via MLB StatsAPI</b></div>div>
-      <div class="eyebrow">Talkin' Yanks</div>div>
+        <div class="datanote" id="datanote">Data note: <b>Live via MLB StatsAPI</b></div>
+      <div class="eyebrow">Talkin' Yanks</div>
       <div class="titlerow">
           <h1>TRADE SNAPSHOT<span>.</span></h1>
-          <button id="goHome" class="home-btn" type="button" title="Back to all 30 teams">⌂ All Teams</button>button>
-          <div class="teambadge" id="teambadge"></div>div>
-      </div>div>
+          <button id="goHome" class="home-btn" type="button" title="Back to all 30 teams">⌂ All Teams</button>
+          <div class="teambadge" id="teambadge"></div>
+      </div>
       <div class="controls">
-          <div><label for="season">Season</label>label><select id="season"></select>select></div>
-          <div><label for="division">Division</label>label><select id="division"><option value="">All Divisions</option>option></select>select></div>
-          <div><label for="team">Team</label>label><select id="team"><option value="">Select a team…</option>option></select>select></div>
-          <div><label for="find">Global player search</label>label><input id="find" type="search" placeholder="Search any MLB player…" autocomplete="off"></div>
+          <div><label for="season">Season</label><select id="season"></select></div>
+          <div><label for="division">Division</label><select id="division"><option value="">All Divisions</option></select></div>
+          <div><label for="team">Team</label><select id="team"><option value="">Select a team…</option></select></div>
+          <div><label for="find">Global player search</label><input id="find" type="search" placeholder="Search any MLB player…" autocomplete="off"></div>
           <div><label>OBS Display</label>
-                <button id="openDisplay" type="button">Open Display ↗</button>button>
+                <button id="openDisplay" type="button">Open Display ↗</button>
           </div>
       </div>
       <div class="onair" id="onair" hidden>
-          <span class="onair-dot"></span>span>
-          <span id="onairText"></span>span>
-          <button id="onairClear" class="exit-btn" type="button" title="Remove the lower third from OBS">✕ Exit Lower Third</button>button>
+          <span class="onair-dot"></span>
+          <span id="onairText"></span>
+          <button id="onairClear" class="exit-btn" type="button" title="Remove the lower third from OBS">✕ Exit Lower Third</button>
       </div>
     </header>
   <div id="status">Loading…</div>
-  <main id="out"></main>main>
+  <main id="out"></main>
   
   <div id="modalBackdrop" class="modal-backdrop" hidden>
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalName">
-        <button id="modalClose" class="modal-close" type="button" aria-label="Close">×</button>button>
+        <button id="modalClose" class="modal-close" type="button" aria-label="Close">×</button>
         <div class="modal-head">
               <img id="modalHeadshot" class="modal-headshot" alt="">
               <div>
@@ -247,11 +247,11 @@
         <div id="modalBody" class="modal-body"></div>
         <div class="modal-export-row" id="modalExportRow">
               <button id="modalDownloadBat" class="modal-export-btn" type="button" hidden
-                        title="Push to OBS and download hitting lower-third PNG">⤓ Download Hitting PNG</button>button>
+                        title="Push to OBS and download hitting lower-third PNG">⤓ Download Hitting PNG</button>
               <button id="modalDownloadPit" class="modal-export-btn" type="button" hidden
-                        title="Push to OBS and download pitching lower-third PNG">⤓ Download Pitching PNG</button>button>
+                        title="Push to OBS and download pitching lower-third PNG">⤓ Download Pitching PNG</button>
               <button id="modalExitOnAir" class="exit-btn" type="button"
-                        title="Remove the lower third from OBS">✕ Exit Lower Third</button>button>
+                        title="Remove the lower third from OBS">✕ Exit Lower Third</button>
         </div>
         <div id="modalDlNote" class="modal-dlnote"></div>
     </div>
