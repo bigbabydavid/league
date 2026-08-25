@@ -519,8 +519,12 @@ async function loadPlayerIndex(year) {
   const d = await j(`${API}/sports/1/players?season=${year}`);
   allPlayers = (d.people || []).map(p => ({
     id: p.id, name: p.fullName, pos: (p.primaryPosition && p.primaryPosition.abbreviation) || '',
+    // (p.currentTeam && p.currentTeam.name) rather than p.currentTeam ? p.currentTeam.name : '' —
+    // the API occasionally returns a currentTeam object with no name on it, and that ternary let
+    // an actual `undefined` through (truthy object, undefined .name), which Firebase's .set()
+    // silently rejects — the push looked like it worked locally but never reached the OBS display.
     number: p.primaryNumber || '', teamId: p.currentTeam ? p.currentTeam.id : null,
-    teamName: p.currentTeam ? p.currentTeam.name : '',
+    teamName: (p.currentTeam && p.currentTeam.name) || '',
   })).filter(p => p.teamId);
 }
 
@@ -1354,7 +1358,7 @@ async function buildMatchupData(pid, row, oppId, oppName) {
 let matchupTeamA = null, matchupTeamB = null;
 
 function rowFromIndexPlayer(p) {
-  return { id: p.id, name: p.name, pos: p.pos, number: p.number, team: p.teamName, teamId: p.teamId };
+  return { id: p.id, name: p.name, pos: p.pos || '', number: p.number || '', team: p.teamName || '', teamId: p.teamId };
 }
 
 // A pitcher's eligible opponents are batters, and vice versa — same rule as wantsBatting/
@@ -2177,16 +2181,44 @@ let onAirPid = null, onAirKind = null;
 // the exact payload last put on air from this page — what the "Download On-Air PNG" button renders
 let lastPushed = null;
 
+// Firebase's .set() silently rejects (rejected promise, nothing written, nothing thrown that
+// surfaces to a user) if ANY value anywhere in the object is `undefined` — and every other part
+// of pushOnAir (localStorage, BroadcastChannel, the local UI) happily accepts undefined, so a
+// single sparse field upstream (e.g. a player record missing a team name) makes the push look
+// like it worked everywhere except the one place that actually matters, the OBS display. This
+// is the one choke point every push goes through, so it's the one place that needs to guarantee
+// a clean object, regardless of what row/data looked like coming in.
+function stripUndefinedDeep(v) {
+  if (v === undefined) return '';
+  if (Array.isArray(v)) return v.map(stripUndefinedDeep);
+  if (v && typeof v === 'object') {
+    const out = {};
+    for (const k of Object.keys(v)) out[k] = stripUndefinedDeep(v[k]);
+    return out;
+  }
+  return v;
+}
+
 function pushOnAir(pid, kind, row, data) {
   if (!row || !data) return;
   onAirPid = pid; onAirKind = kind;
   // `on: true` is the flag the existing Trade Snapshot display page already looks for, so the
   // wire format here stays byte-compatible with what's live today.
-  const payload = { on: true, pid, kind, name: row.name, pos: row.pos, team: row.team, number: row.number, data, ts: Date.now() };
+  const payload = stripUndefinedDeep({ on: true, pid, kind, name: row.name, pos: row.pos, team: row.team, number: row.number, data, ts: Date.now() });
   lastPushed = payload;
   try { localStorage.setItem(LT_KEY, JSON.stringify(payload)); } catch {}
   if (ltChannel) ltChannel.postMessage(payload);
-  if (ltRef) ltRef.set(payload).catch(e => console.error('Firebase push failed:', e));
+  // This write is what actually reaches a real OBS Browser Source (a separate process —
+  // localStorage/BroadcastChannel above only reach other tabs in this same browser). If it
+  // fails, the local preview above already looks correct, so surface it visibly rather than
+  // only logging — a broadcaster mid-show won't be checking the console.
+  if (ltRef) ltRef.set(payload).catch(e => {
+    console.error('Firebase push failed:', e);
+    if (lastPushed === payload) {
+      const t = $('onairText');
+      if (t) t.innerHTML += ' <span style="color:var(--red)">— ⚠ OBS sync failed, try again</span>';
+    }
+  });
   updateOnAirUI(payload);
   renderAllTargets(payload);   // keeps the in-modal preview in step with what just went on air
   // this page is subscribed to the same node, so mark the payload as already painted — otherwise
