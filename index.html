@@ -129,6 +129,8 @@
   .stand tbody tr.teamrow:hover td{background:#FFF6F6}
   .stand .tlink{color:var(--blue);font-weight:700}
   .stand tbody tr.teamrow:hover .tlink{color:var(--accent);text-decoration:underline}
+  tr.teamrow.dim{opacity:.5}
+  .team-card.on{border-color:var(--accent);background:#EEF2F7}
 
   button{background:#fff;color:var(--ink);border:1px solid var(--grid);border-radius:4px;
     padding:7px 11px;font-family:"Sofia Sans Extra Condensed",sans-serif;font-weight:800;
@@ -192,6 +194,16 @@
   .modal-section h3{font-family:"Sofia Sans Extra Condensed",sans-serif;font-weight:800;
     text-transform:uppercase;font-size:12px;letter-spacing:1.5px;color:var(--accent);margin:0 0 8px}
   .modal-section h3::before{content:"— "}
+  /* ---- BvP matchup table inside the player modal (ESPN-style, one row per opponent) ---- */
+  .matchup-table-wrap{overflow-x:auto;margin-bottom:4px;border:1px solid var(--grid);border-radius:4px}
+  table.matchup-table{font-size:12.5px}
+  table.matchup-table th,table.matchup-table td{padding:5px 7px;white-space:nowrap}
+  table.matchup-table td.name{font-weight:700}
+  table.matchup-table tr.matchup-row{cursor:pointer}
+  table.matchup-table tr.matchup-row:hover td{background:#FFF6F6}
+  table.matchup-table tr.matchup-row.on td{background:#FBEAEA}
+  table.matchup-table tr.matchup-row.dim{opacity:.45;cursor:default}
+  table.matchup-table tr.matchup-totals td{font-weight:800;background:var(--chrome);border-top:2px solid var(--hard)}
   .modal-line{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:15px;
     color:var(--ink);margin-bottom:10px;font-weight:800}
   .modal-hitline{font-family:"Sofia Sans Extra Condensed",sans-serif;font-weight:700;
@@ -222,7 +234,7 @@
   /* side-by-side lefty/righty comparison on the bar */
   .lt-splitcompare{display:flex;align-items:center;justify-content:center;width:100%}
   .lt-splitcol{flex:1;display:flex;flex-direction:column;align-items:center;gap:10px;min-width:0}
-  .lt-splitcol-label{font-family:"Sofia Sans Extra Condensed",sans-serif;font-weight:700;font-size:20px;
+  .lt-splitcol-label{font-family:"Sofia Sans Extra Condensed",sans-serif;font-weight:700;font-size:23px;
     color:#93a5c2;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap}
   .lt-splitcol-stats{display:flex;align-items:center;justify-content:center;gap:30px;white-space:nowrap}
   .lt-splitcompare-divider{width:2px;align-self:stretch;margin:8px 30px;background:#26426e;flex:none}
@@ -264,7 +276,7 @@
   .lt-stats{flex:1;min-width:0;text-align:center;position:relative;align-self:stretch;
     display:flex;flex-direction:column;justify-content:center}
   .lt-hitline{position:absolute;top:14px;left:0;right:0;margin:0;font-family:"Sofia Sans Extra Condensed",sans-serif;
-    font-weight:700;font-size:20px;letter-spacing:.4px;text-transform:uppercase;color:#93a5c2;
+    font-weight:700;font-size:23px;letter-spacing:.4px;text-transform:uppercase;color:#93a5c2;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .lt-hitline .lt-splitlabel{color:#F5F7FA;font-weight:800}
   .lt-hitline .lt-hitcount{color:#93a5c2}
@@ -292,6 +304,7 @@
   <div class="titlerow">
     <h1>TRADE SNAPSHOT<span>.</span></h1>
     <button id="goHome" class="home-btn" type="button" title="Back to all 30 teams">⌂ All Teams</button>
+    <button id="openMatchups" class="home-btn" type="button" title="Batter vs. pitcher matchup builder">⚔ BvP Matchups</button>
     <div class="teambadge" id="teambadge"></div>
   </div>
   <div class="controls">
@@ -346,6 +359,7 @@
       </div>
       <div class="scope-row" id="matchupResults"></div>
     </div>
+    <div class="modal-section" id="teamMatchupBox" hidden></div>
     <div id="modalBody" class="modal-body"></div>
     <div class="modal-export-row" id="modalExportRow">
       <button id="modalDownloadBat" class="modal-export-btn" type="button" hidden
@@ -828,7 +842,7 @@ function paintRoster() {
   if (!rosterState) return;
   const { team, year, rows } = rosterState;
   currentIndex = new Map();
-  rows.forEach(r => currentIndex.set(String(r.id), { id: r.id, name: r.name, pos: r.pos, team: team ? team.name : '', teamId: team ? team.id : null }));
+  rows.forEach(r => currentIndex.set(String(r.id), { id: r.id, name: r.name, pos: r.pos, number: r.number, team: team ? team.name : '', teamId: team ? team.id : null }));
 
   const groups = [
     ['active', 'ACTIVE ROSTER'],
@@ -933,7 +947,7 @@ function paintSearch() {
                                        : [...players].sort((a, b) => a.name.localeCompare(b.name));
     rows.forEach(p => {
       const tname = teamNameFor(p);
-      currentIndex.set(String(p.id), { id: p.id, name: p.name, pos: p.pos, team: tname, teamId: p.teamId });
+      currentIndex.set(String(p.id), { id: p.id, name: p.name, pos: p.pos, number: p.number, team: tname, teamId: p.teamId });
       const tr = el('tr'); tr.dataset.pid = p.id;
       tr.appendChild(el('td', 'num', p.number));
       tr.appendChild(el('td', 'name', p.name));
@@ -1303,12 +1317,15 @@ async function buildLRCompareData(pid, row, tier) {
 }
 
 // ---- Career vs. a specific opponent -------------------------------------------------------
-async function buildMatchupData(pid, row, oppId, oppName) {
-  const isPitcher = wantsPitching(row) && !wantsBatting(row);
-  const group = isPitcher ? 'pitching' : 'hitting';
+// Split into a raw fetch + a pure transform so the BvP Matchup Builder below can batch-fetch
+// raw stats for an entire roster (for sorting by sample size) and reuse the exact same graphic
+// shape this single-opponent search has always pushed to air.
+async function fetchVsPlayerStat(pid, group, oppId) {
   const d = await jc(`${API}/people/${pid}/stats?stats=vsPlayer&opposingPlayerId=${oppId}&group=${group}&sportId=1`);
   const sec = (d.stats || [])[0];
-  const st = sec && sec.splits && sec.splits.length ? sec.splits[0].stat : null;
+  return sec && sec.splits && sec.splits.length ? sec.splits[0].stat : null;
+}
+function matchupGraphicFromStat(st, oppName, isPitcher) {
   if (!st) return null;
   const label = `CAREER VS. ${oppName.toUpperCase()}`;
   if (!isPitcher) {
@@ -1320,6 +1337,195 @@ async function buildMatchupData(pid, row, oppId, oppName) {
   return { label, splitLabel: label, hitLine: `${st.hits}-for-${st.atBats} allowed`, cells: [
     ['IP', st.inningsPitched], ['H', st.hits], ['BB', st.baseOnBalls],
     ['K', st.strikeOuts], ['HR', st.homeRuns], ['AVG', st.avg]] };
+}
+async function buildMatchupData(pid, row, oppId, oppName) {
+  const isPitcher = wantsPitching(row) && !wantsBatting(row);
+  const group = isPitcher ? 'pitching' : 'hitting';
+  const st = await fetchVsPlayerStat(pid, group, oppId);
+  return matchupGraphicFromStat(st, oppName, isPitcher);
+}
+
+// =====================================================================================
+// BvP Matchup Builder — pick both teams in a series, pick one anchor player from either
+// roster, and see (and push) his career numbers against every eligible player on the other
+// roster in one batched sweep. Same underlying data/graphic as the in-modal opponent search
+// above, just pre-loaded for a whole roster instead of one name at a time.
+// =====================================================================================
+let matchupTeamA = null, matchupTeamB = null;
+
+function rowFromIndexPlayer(p) {
+  return { id: p.id, name: p.name, pos: p.pos, number: p.number, team: p.teamName, teamId: p.teamId };
+}
+
+// A pitcher's eligible opponents are batters, and vice versa — same rule as wantsBatting/
+// wantsPitching elsewhere, applied to the *other* roster.
+function eligiblePool(teamId, wantPitchers) {
+  return allPlayers.filter(p => p.teamId === teamId &&
+    (wantPitchers ? (p.pos === 'P' || p.pos === 'TWP') : p.pos !== 'P'))
+    .sort((a, b) => posRank(a.pos) - posRank(b.pos) || a.name.localeCompare(b.name));
+}
+
+function teamOptionsMarkup() {
+  return divisions.map(dv => `<optgroup label="${dv.short}">` +
+    dv.teams.map(t => `<option value="${t.id}">${t.name}</option>`).join('') + `</optgroup>`).join('');
+}
+
+// This page is just the entry point — pick the two teams in the series and browse both
+// rosters. Clicking a name opens the normal player modal (same one used everywhere else in
+// the tool), which is where the actual BvP table and on-air preview live — see
+// paintTeamMatchupBox() further down, near openPlayerModal.
+function renderMatchupPage() {
+  currentView = 'matchup';
+  setTeamBadge(null);
+  say('');
+  const out = $('out'); out.innerHTML = '';
+  out.appendChild(el('h2', null, 'BvP Matchup Builder'));
+  out.appendChild(el('div', 'metanote',
+    'Pick both teams in the series, then click a player on either roster to open their career numbers against every eligible player on the other side — with the same on-air preview you get everywhere else in the tool.'));
+
+  const pickRow = el('div', 'scope-row');
+  const selA = document.createElement('select'); selA.id = 'matchupTeamA';
+  const selB = document.createElement('select'); selB.id = 'matchupTeamB';
+  [selA, selB].forEach(sel => { sel.innerHTML = '<option value="">Select a team…</option>' + teamOptionsMarkup(); });
+  if (matchupTeamA) selA.value = matchupTeamA;
+  if (matchupTeamB) selB.value = matchupTeamB;
+  const wrapA = el('div'); wrapA.appendChild(el('label', null, 'Team A')); wrapA.appendChild(selA);
+  const wrapB = el('div'); wrapB.appendChild(el('label', null, 'Team B')); wrapB.appendChild(selB);
+  pickRow.appendChild(wrapA); pickRow.appendChild(wrapB);
+  out.appendChild(pickRow);
+
+  out.appendChild(el('div', null, '')).id = 'matchupRosters';
+
+  selA.onchange = () => { matchupTeamA = selA.value ? +selA.value : null; paintMatchupRosters(); };
+  selB.onchange = () => { matchupTeamB = selB.value ? +selB.value : null; paintMatchupRosters(); };
+
+  paintMatchupRosters();
+}
+
+function paintMatchupRosters() {
+  const box = $('matchupRosters'); if (!box) return;
+  box.innerHTML = '';
+  if (!matchupTeamA || !matchupTeamB) {
+    box.appendChild(el('div', 'modal-empty', 'Choose both teams to load their rosters.'));
+    return;
+  }
+  if (matchupTeamA === matchupTeamB) {
+    box.appendChild(el('div', 'modal-empty', 'Pick two different teams.'));
+    return;
+  }
+  // openPlayerModal looks players up in currentIndex, same as every roster/search view —
+  // populate it here with both teams so clicking either roster works the normal way.
+  currentIndex = new Map();
+  const wrap = el('div', 'stand-wrap');
+  [matchupTeamA, matchupTeamB].forEach(tid => {
+    const team = teamsById.get(tid);
+    const oppTeamId = tid === matchupTeamA ? matchupTeamB : matchupTeamA;
+    const col = el('div', 'stand');
+    col.appendChild(el('h3', null, team ? team.name : 'Team'));
+    const list = allPlayers.filter(p => p.teamId === tid)
+      .sort((a, b) => posRank(a.pos) - posRank(b.pos) || a.name.localeCompare(b.name));
+    const grid = el('div', 'team-grid');
+    list.forEach(p => {
+      currentIndex.set(String(p.id), rowFromIndexPlayer(p));
+      const btn = el('button', 'team-card');
+      btn.type = 'button';
+      btn.innerHTML = `<span class="tname">${p.name}</span><span class="tcount">${p.pos}</span>`;
+      btn.onclick = () => openPlayerModal(p.id, oppTeamId);
+      grid.appendChild(btn);
+    });
+    col.appendChild(grid);
+    wrap.appendChild(col);
+  });
+  box.appendChild(wrap);
+}
+
+// =====================================================================================
+// BvP table inside the player modal — ESPN-style career-vs-team breakdown, one row per
+// eligible opponent plus a TOTALS row, reusing the raw vsPlayer stat this whole feature is
+// built on. Only shows up when the modal was opened from the Matchup Builder above.
+// =====================================================================================
+let modalMatchupOppTeamId = null;
+
+function matchupStatRow(st) {
+  if (!st) return { ab: 0, h: 0, d: 0, t: 0, hr: 0, rbi: 0, bb: 0, k: 0, avg: '.000', obp: '.000', slg: '.000', ops: '.000' };
+  return {
+    ab: +st.atBats || 0, h: +st.hits || 0, d: +st.doubles || 0, t: +st.triples || 0,
+    hr: +st.homeRuns || 0, rbi: +st.rbi || 0, bb: +st.baseOnBalls || 0, k: +st.strikeOuts || 0,
+    avg: st.avg || '.000', obp: st.obp || '.000', slg: st.slg || '.000', ops: st.ops || '.000',
+  };
+}
+
+// Same raw-counts-first approach as aggregateBatting elsewhere in the file — rates are derived
+// from the summed counts, never averaged, since these are wildly uneven sample sizes per pitcher.
+function matchupTotals(sts) {
+  const list = sts.filter(Boolean);
+  const sum = k => list.reduce((a, s) => a + (+s[k] || 0), 0);
+  const ab = sum('atBats'), h = sum('hits'), bb = sum('baseOnBalls'), hbp = sum('hitByPitch'),
+        sf = sum('sacFlies'), tb = sum('totalBases');
+  const obpDen = ab + bb + hbp + sf;
+  const obp = obpDen ? (h + bb + hbp) / obpDen : 0, slg = ab ? tb / ab : 0;
+  return {
+    ab, h, d: sum('doubles'), t: sum('triples'), hr: sum('homeRuns'), rbi: sum('rbi'), bb, k: sum('strikeOuts'),
+    avg: fmt3(ab ? h / ab : 0), obp: fmt3(obp), slg: fmt3(slg), ops: fmt3(obp + slg),
+  };
+}
+
+function matchupTableRowHTML(cls, name, s) {
+  return `<tr class="${cls}"><td class="name">${name}</td>` +
+    ['ab', 'h', 'd', 't', 'hr', 'rbi', 'bb', 'k', 'avg', 'obp', 'slg', 'ops']
+      .map(k => `<td class="num">${s[k]}</td>`).join('') + `</tr>`;
+}
+
+function buildMatchupTableHTML(rows, isPitcherAnchor, oppTeamName) {
+  const label = isPitcherAnchor ? 'Batter' : 'Pitcher';
+  const heads = ['AB', 'H', '2B', '3B', 'HR', 'RBI', 'BB', 'K', 'AVG', 'OBP', 'SLG', 'OPS'];
+  const bodyRows = rows.map(({ opp, st }) => {
+    const has = !!st && (+st.atBats || 0) > 0;
+    return matchupTableRowHTML('matchup-row' + (has ? '' : ' dim'),
+      `${opp.name}${opp.number ? ' #' + opp.number : ''}`, matchupStatRow(st));
+  }).join('');
+  const totalsRow = matchupTableRowHTML('matchup-totals', 'TOTALS', matchupTotals(rows.map(r => r.st)));
+  return `<h3>Career vs. ${oppTeamName} ${isPitcherAnchor ? 'Batters' : 'Pitchers'}</h3>` +
+    `<div class="matchup-table-wrap"><table class="matchup-table">` +
+    `<thead><tr><th>${label}</th>${heads.map(h => `<th>${h}</th>`).join('')}</tr></thead>` +
+    `<tbody>${bodyRows}${totalsRow}</tbody></table></div>` +
+    `<div class="modal-empty" style="margin-top:6px">Click a row with career at-bats to push that matchup to the lower third.</div>`;
+}
+
+function wireMatchupTableClicks(box, rows, isPitcherAnchor) {
+  box.querySelectorAll('tr.matchup-row:not(.dim)').forEach((tr, i) => {
+    tr.onclick = () => {
+      const { opp, st } = rows[i];
+      const data = matchupGraphicFromStat(st, opp.name, isPitcherAnchor);
+      if (!data) return;
+      box.querySelectorAll('tr.matchup-row.on').forEach(x => x.classList.remove('on'));
+      tr.classList.add('on');
+      pushOnAir(modalPid, isPitcherAnchor ? 'pit' : 'bat', modalRow, data);
+      $('modalDlNote').textContent = `On air: ${data.label}`;
+    };
+  });
+}
+
+async function paintTeamMatchupBox() {
+  const box = $('teamMatchupBox');
+  if (!box) return;
+  if (!modalMatchupOppTeamId || !modalRow) { box.hidden = true; box.innerHTML = ''; return; }
+  const pid = modalPid, row = modalRow, oppTeamId = modalMatchupOppTeamId;
+  const isPitcherAnchor = wantsPitching(row) && !wantsBatting(row);
+  const oppTeamName = (teamsById.get(oppTeamId) || {}).name || 'the other team';
+  const pool = eligiblePool(oppTeamId, !isPitcherAnchor);
+  box.hidden = false;
+  box.innerHTML = `<h3>Career vs. ${oppTeamName} ${isPitcherAnchor ? 'Batters' : 'Pitchers'}</h3>` +
+    `<div class="modal-empty">Loading ${pool.length} matchups…</div>`;
+  const group = isPitcherAnchor ? 'pitching' : 'hitting';
+  const rows = await Promise.all(pool.map(async opp => {
+    const st = await fetchVsPlayerStat(pid, group, opp.id).catch(() => null);
+    return { opp, st };
+  }));
+  if (modalPid !== pid || modalMatchupOppTeamId !== oppTeamId) return;   // selection changed mid-flight
+  rows.sort((a, b) => (+((b.st || {}).atBats) || 0) - (+((a.st || {}).atBats) || 0) || a.opp.name.localeCompare(b.opp.name));
+  box.innerHTML = buildMatchupTableHTML(rows, isPitcherAnchor, oppTeamName);
+  wireMatchupTableClicks(box, rows, isPitcherAnchor);
 }
 
 // ---- Notable rankings ---------------------------------------------------------------------
@@ -1523,13 +1729,16 @@ function paintSeasonPicker() {
   };
 }
 
-async function openPlayerModal(pid) {
+async function openPlayerModal(pid, matchupOppTeamId) {
   const row = currentIndex.get(String(pid));
   if (!row) return;
   modalPid = pid; modalRow = row; modalTf = 'season';
   modalSince = ''; modalRangeFrom = ''; modalRangeTo = ''; modalLastX = 0;
   modalSeasons = new Set([String($('season').value)]);
   modalSeasonList = [];
+  // only set when opened from the BvP Matchup Builder — every other entry point (roster,
+  // search, position browsing) opens with this cleared, so the table stays hidden there.
+  modalMatchupOppTeamId = matchupOppTeamId || null;
   $('modalDlNote').textContent = '';
   $('modalHeadshot').src = headshotURL(pid);
   $('modalName').textContent = row.name;
@@ -1542,6 +1751,7 @@ async function openPlayerModal(pid) {
   paintSeasonPicker();
   paintTfPills();
   wireModalExtras();
+  paintTeamMatchupBox();   // independent of the split/season scope below — runs in the background
   await loadModalStats();
   // season history is only needed for the picker, so it loads alongside rather than blocking stats
   const groups = [wantsBatting(row) ? 'hitting' : null, wantsPitching(row) ? 'pitching' : null].filter(Boolean);
@@ -1677,10 +1887,13 @@ function wireModalExtras() {
       b.onclick = () => {
         const label = `CAREER WITH ${nickOf(t.name).toUpperCase()}`;
         const st = t.stat;
+        const gp = st.gamesPlayed != null ? st.gamesPlayed : null;
         const data = group === 'pitching'
           ? { label, splitLabel: label, cells: [['IP', st.inningsPitched], ['ERA', st.era], ['WHIP', st.whip],
               ['K', st.strikeOuts], ['BB', st.baseOnBalls], ['W-L', `${st.wins}-${st.losses}`]] }
-          : { label, splitLabel: label, hitLine: `${st.hits}-for-${st.atBats}`, cells: [
+          : { label, splitLabel: label,
+              hitLine: gp != null ? `${gp} games (${st.hits}-for-${st.atBats})` : `${st.hits}-for-${st.atBats}`,
+              cells: [
               ['AVG', st.avg], ['OBP', st.obp], ['SLG', st.slg], ['OPS', st.ops],
               ['HR', st.homeRuns], ['RBI', st.rbi]] };
         pushCustomGraphic(data, group === 'pitching' ? 'pit' : 'bat');
@@ -1823,7 +2036,7 @@ async function renderLowerThird(data, row, pid) {
   ctx.fillStyle = '#F5F7FA'; ctx.font = '62px Anton';
   ctx.fillText(row.name.toUpperCase(), nx, 124);
   ctx.fillStyle = '#93a5c2'; ctx.font = '700 20px "Sofia Sans Extra Condensed"';
-  ctx.fillText([row.pos, row.team].filter(Boolean).join('  ·  ').toUpperCase(), nx, 156);
+  ctx.fillText([row.pos, row.team, row.number ? `#${row.number}` : ''].filter(Boolean).join('  ·  ').toUpperCase(), nx, 156);
 
   const divX = 800;
   ctx.strokeStyle = '#26426e'; ctx.lineWidth = 2;
@@ -1836,7 +2049,7 @@ async function renderLowerThird(data, row, pid) {
   // split name (white, e.g. "LAST 30 DAYS") and the hits-for-AB count (muted, e.g. "12-FOR-72")
   // sit side by side above the stats — either can be absent and the other still centres alone
   if (data.splitLabel || data.hitLine) {
-    ctx.font = '700 22px "Sofia Sans Extra Condensed"';
+    ctx.font = '700 25px "Sofia Sans Extra Condensed"';
     const parts = [];
     if (data.splitLabel) parts.push({ text: data.splitLabel.toUpperCase(), color: '#F5F7FA' });
     if (data.hitLine) parts.push({ text: data.hitLine.toUpperCase(), color: '#93a5c2' });
@@ -1858,7 +2071,7 @@ async function renderLowerThird(data, row, pid) {
     const GUTTER = 40, colW = (avail - GUTTER) / 2, PAIR_GAP = 30;
     const drawCol = (side, centre) => {
       ctx.textAlign = 'center';
-      ctx.fillStyle = '#93a5c2'; ctx.font = '700 20px "Sofia Sans Extra Condensed"';
+      ctx.fillStyle = '#93a5c2'; ctx.font = '700 23px "Sofia Sans Extra Condensed"';
       ctx.fillText(`${side.label.toUpperCase()} (${side.pa} ${unit})`, centre, 78);
       const pairs = [['AVG', side.avg], [secondKey, side.ops], ['HR', side.hr]];
       let vs = 54;
@@ -1969,7 +2182,7 @@ function pushOnAir(pid, kind, row, data) {
   onAirPid = pid; onAirKind = kind;
   // `on: true` is the flag the existing Trade Snapshot display page already looks for, so the
   // wire format here stays byte-compatible with what's live today.
-  const payload = { on: true, pid, kind, name: row.name, pos: row.pos, team: row.team, data, ts: Date.now() };
+  const payload = { on: true, pid, kind, name: row.name, pos: row.pos, team: row.team, number: row.number, data, ts: Date.now() };
   lastPushed = payload;
   try { localStorage.setItem(LT_KEY, JSON.stringify(payload)); } catch {}
   if (ltChannel) ltChannel.postMessage(payload);
@@ -2038,12 +2251,12 @@ function fitPreviewStage(root) {
 }
 
 function paintOnAirBar(root, payload) {
-  const { name, pos, team, data } = payload;
+  const { name, pos, team, number, data } = payload;
   const q = sel => root.querySelector(sel);
   const bar = q('.lt-bar');
   q('.lt-headshot').src = headshotURL(payload.pid);
   q('.lt-name').textContent = name.toUpperCase();
-  q('.lt-sub').textContent = [pos, team].filter(Boolean).join('  \u00b7  ').toUpperCase();
+  q('.lt-sub').textContent = [pos, team, number ? `#${number}` : ''].filter(Boolean).join('  \u00b7  ').toUpperCase();
   const hitEl = q('.lt-hitline');
   const bits = [
     data.splitLabel ? `<span class="lt-splitlabel">${data.splitLabel.toUpperCase()}</span>` : '',
@@ -2275,7 +2488,7 @@ async function downloadOnAirGraphic() {
   if (!p || !p.data) { note.textContent = 'Nothing on air to download yet.'; return; }
   btn.disabled = true; note.textContent = 'Building graphic\u2026';
   try {
-    const { canvas, hadPhoto } = await renderLowerThird(p.data, { name: p.name, pos: p.pos, team: p.team }, p.pid);
+    const { canvas, hadPhoto } = await renderLowerThird(p.data, { name: p.name, pos: p.pos, team: p.team, number: p.number }, p.pid);
     const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
     if (!blob) throw new Error('Canvas export failed');
     const a = el('a');
@@ -2351,8 +2564,10 @@ $('team').onchange = () => {
 $('season').onchange = guard(async () => {
   await Promise.all([loadTeams($('season').value), loadPlayerIndex($('season').value)]);
   if (currentView === 'roster' && currentTeamId) guard(loadRoster)(currentTeamId);
+  else if (currentView === 'matchup') renderMatchupPage();
   else renderLanding();
 });
+$('openMatchups').onclick = () => { currentView = 'matchup'; renderMatchupPage(); };
 
 $('out').onclick = e => {
   const th = e.target.closest('thead th[data-key]');
