@@ -241,6 +241,28 @@
   .modal-empty{color:var(--dim);font-size:13px}
   .modal-dlnote{color:var(--dim);font-size:10px;text-align:right;margin-top:8px;min-height:12px}
 
+  /* ---- modal-only re-skin: ported from the "Yankees Series Snapshot" scoresheet tool at the
+     user's request so the player modal and Team Totals modal look/feel identical to that tool.
+     Every other color token here (--paper/--chrome/--ink/--dim/--grid/--hard/--red/--blue) already
+     matched between the two tools byte-for-byte before this change — the ONLY visual difference
+     was that Trade Snapshot's modal used its navy --accent for hover/active highlights where the
+     reference tool uses --red. Scoping the override to #modalBackdrop means it can't leak into the
+     header/standings/roster/BvP Matchup Builder, which keep their navy branding exactly as before. */
+  #modalBackdrop{--accent:var(--red);--accent-hover:#a30000}
+  /* Game log picker (new) — a scrollable, clickable/shift-clickable list of a season's games,
+     styled with the same list-row pattern as the reference tool's game log. */
+  .modal-gamelog-list{max-height:220px;overflow-y:auto;border:1px solid var(--grid);border-radius:6px;margin-top:4px}
+  .modal-gamelog-row{display:flex;align-items:center;gap:10px;padding:6px 10px;cursor:pointer;user-select:none;
+    font-family:"Sofia Sans Extra Condensed",sans-serif;font-size:13px;border-bottom:1px solid var(--grid)}
+  .modal-gamelog-row:last-child{border-bottom:none}
+  .modal-gamelog-row:hover{background:#f7f7f7}
+  .modal-gamelog-row.active{background:var(--accent);color:#fff}
+  .modal-gamelog-date{flex:0 0 72px;color:var(--dim);font-weight:700}
+  .modal-gamelog-row.active .modal-gamelog-date{color:#fff}
+  .modal-gamelog-opp{flex:0 0 90px;font-weight:700}
+  .modal-gamelog-line{flex:1;color:var(--dim);text-align:right}
+  .modal-gamelog-row.active .modal-gamelog-line{color:#fff}
+
   /* ---- control page: on-air status chip ---- */
   .onair{display:flex;align-items:center;gap:8px;margin-top:10px;font-family:"Sofia Sans Extra Condensed",sans-serif;
     font-size:12px;letter-spacing:.4px;color:var(--dim)}
@@ -344,16 +366,32 @@
       </div>
     </div>
     <div class="scope-block" id="seasonPicker"></div>
+    <div class="scope-block" id="monthsBlock">
+      <div class="modal-hitline">Months — check any to combine</div>
+      <div class="scope-row" id="monthsRow"></div>
+    </div>
     <div class="tf-pills" id="tfPills"></div>
+    <div class="scope-block" id="gameLogSection">
+      <div class="modal-hitline">Game log — click to select, shift-click for a range</div>
+      <div class="scope-row"><select id="modalGameLogSeason"></select></div>
+      <div class="modal-gamelog-list" id="modalGameLogList"></div>
+      <div class="scope-row"><button type="button" class="tf-pill" id="modalGameLogApply" disabled>Apply</button></div>
+    </div>
     <div class="scope-block" id="modalExtras">
-      <div class="scope-row" id="lrRow">
-        <button type="button" class="tf-pill" data-lr="season">Season L/R Split</button>
-        <button type="button" class="tf-pill" data-lr="career">Career L/R Split</button>
+      <div class="scope-row" id="rankTeamRow">
         <button type="button" class="tf-pill" id="rankFind">Find Notable Rankings</button>
       </div>
       <div class="scope-row" id="rankRow" hidden></div>
+      <div class="scope-row" id="lrRow">
+        <button type="button" class="tf-pill" data-lr="season">Season L/R Split</button>
+        <button type="button" class="tf-pill" data-lr="career">Career L/R Split</button>
+      </div>
+      <div class="scope-row" id="awardsFindRow">
+        <button type="button" class="tf-pill" id="awardsFind">Find Awards</button>
+      </div>
+      <div class="scope-row" id="awardsRow" hidden></div>
       <div class="scope-row" id="teamRow"></div>
-      <div class="scope-row">
+      <div class="scope-row" id="matchupRow">
         <label for="matchupSearch">Career vs. opponent</label>
         <input type="text" id="matchupSearch" placeholder="Search a player…" autocomplete="off" style="flex:1;min-width:180px">
       </div>
@@ -884,12 +922,30 @@ function paintRoster() {
     });
   });
   table.appendChild(tbody);
-  addTable(`${team ? team.name : 'Team'} Roster — ${year}${posFilter ? ' · ' + posFilter : ''}`, table);
+  // "Team Totals" opens the same player-modal shell, aggregated for the whole roster — a
+  // deliberately separate control from clicking the team name (which still only opens this
+  // roster page, unchanged).
+  let teamTotalsBtn = null;
+  if (team) {
+    teamTotalsBtn = el('button', 'home-btn', 'Team Totals');
+    teamTotalsBtn.type = 'button';
+    teamTotalsBtn.title = 'Aggregate stats for the whole roster';
+    teamTotalsBtn.onclick = () => guard(openTeamTotalsModal)(team);
+  }
+  addTable(`${team ? team.name : 'Team'} Roster — ${year}${posFilter ? ' · ' + posFilter : ''}`, table, null, teamTotalsBtn);
 }
 
-function addTable(title, table, note) {
+function addTable(title, table, note, headerExtra) {
   const out = $('out'); out.innerHTML = '';
-  out.appendChild(el('h2', null, title));
+  if (headerExtra) {
+    const row = el('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:12px;flex-wrap:wrap';
+    row.appendChild(el('h2', null, title));
+    row.appendChild(headerExtra);
+    out.appendChild(row);
+  } else {
+    out.appendChild(el('h2', null, title));
+  }
   if (note) out.appendChild(el('div', 'metanote', note));
   if (table) { const w = el('div', 'wrap'); w.appendChild(table); out.appendChild(w); }
 }
@@ -1128,10 +1184,13 @@ async function getSecondHalfStart(year) {
 }
 
 async function fetchStat(pid, group, tf, year) {
-  const base = `${API}/people/${pid}/stats?season=${year}&group=${group}`;
+  const base = `${statsBase(pid)}/stats?season=${year}&group=${group}`;
   let url;
   if (tf === 'season') url = `${base}&stats=season`;
-  else if (tf === 'career') url = `${API}/people/${pid}/stats?stats=career&group=${group}&sportId=1`;
+  else if (tf === 'career') {
+    if (isTeamPid(pid)) return null;   // no team-level "career" concept offered (matches reference)
+    url = `${API}/people/${pid}/stats?stats=career&group=${group}&sportId=1`;
+  }
   else if (isSplitTf(tf)) url = `${base}&stats=statSplits&sitCodes=${tf}`;
   else if (tf === 'home' || tf === 'away') url = `${base}&stats=statSplits&sitCodes=${tf === 'home' ? 'h' : 'a'}`;
   else if (tf === '2h') {
@@ -1148,8 +1207,23 @@ async function fetchStat(pid, group, tf, year) {
   return sec && sec.splits && sec.splits.length ? sec.splits[0].stat : null;
 }
 
-function wantsBatting(row) { return row.pos !== 'P'; }
-function wantsPitching(row) { return row.pos === 'P' || row.pos === 'TWP'; }
+// A Team Totals row shows both the offense and pitching-staff blocks together (same shape as an
+// existing two-way player), rather than the reference tool's two separately-opened hitting/pitching
+// team modals — one button, one modal, both lines. See the Team Totals section below.
+function wantsBatting(row) { return row.isTeam || row.pos !== 'P'; }
+function wantsPitching(row) { return row.isTeam || row.pos === 'P' || row.pos === 'TWP'; }
+
+// Team Totals uses a synthetic "team:<id>" pid (mirrors the reference tool's own
+// "teamTotal:<id>:<group>" synthetic-pid pattern) so every existing fetch helper below can route to
+// either /people/{pid}/stats or /teams/{id}/stats from one shared code path instead of forking each
+// function into player and team variants.
+const isTeamPid = pid => typeof pid === 'string' && pid.startsWith('team:');
+const teamIdFromPid = pid => +pid.slice(5);
+const statsBase = pid => isTeamPid(pid) ? `${API}/teams/${teamIdFromPid(pid)}` : `${API}/people/${pid}`;
+// same reasoning as the regular (light) team logo vs headshot swap below — the dark-background
+// variant reads correctly on the lower third's navy bar
+const logoURLDark = id => `https://www.mlbstatic.com/team-logos/team-cap-on-dark/${id}.svg`;
+const payloadImageURL = pid => isTeamPid(pid) ? logoURLDark(teamIdFromPid(pid)) : headshotURL(pid);
 
 // =====================================================================================
 // Season scope — which season(s) the split is measured over. Any combination of seasons can be
@@ -1178,7 +1252,10 @@ async function fetchSeasonList(pid, groups) {
   const years = new Set();
   await Promise.all(groups.map(async g => {
     try {
-      const d = await jc(`${API}/people/${pid}/stats?stats=yearByYear&group=${g}`);
+      const url = isTeamPid(pid)
+        ? `${statsBase(pid)}/stats?stats=yearByYear&group=${g}&sportId=1`
+        : `${statsBase(pid)}/stats?stats=yearByYear&group=${g}`;
+      const d = await jc(url);
       ((d.stats || [])[0]?.splits || []).forEach(sp => { if (sp.season) years.add(String(sp.season)); });
     } catch {}
   }));
@@ -1234,7 +1311,7 @@ async function fetchSince(pid, group, sinceDate) {
     const start = y === startYear ? sinceDate : `${y}-01-01`;
     const end = y === endYear ? today : `${y}-12-31`;
     try {
-      const d = await jc(`${API}/people/${pid}/stats?season=${y}&group=${group}&stats=byDateRange&startDate=${start}&endDate=${end}`);
+      const d = await jc(`${statsBase(pid)}/stats?season=${y}&group=${group}&stats=byDateRange&startDate=${start}&endDate=${end}`);
       const sec = (d.stats || [])[0];
       return sec && sec.splits && sec.splits.length ? sec.splits[0].stat : null;
     } catch { return null; }
@@ -1252,7 +1329,7 @@ async function fetchRange(pid, group, from, to) {
     const start = y === y0 ? from : `${y}-01-01`;
     const end = y === y1 ? to : `${y}-12-31`;
     try {
-      const d = await jc(`${API}/people/${pid}/stats?season=${y}&group=${group}&stats=byDateRange&startDate=${start}&endDate=${end}`);
+      const d = await jc(`${statsBase(pid)}/stats?season=${y}&group=${group}&stats=byDateRange&startDate=${start}&endDate=${end}`);
       const sec = (d.stats || [])[0];
       return sec && sec.splits && sec.splits.length ? sec.splits[0].stat : null;
     } catch { return null; }
@@ -1261,6 +1338,7 @@ async function fetchRange(pid, group, from, to) {
 }
 
 async function fetchCareerSplit(pid, group, tf) {
+  if (isTeamPid(pid)) return null;   // careerStatSplits has no team-level equivalent
   const sit = CAREER_SPLIT_SIT[tf];
   const d = await jc(`${API}/people/${pid}/stats?stats=careerStatSplits&sitCodes=${sit}&group=${group}&sportId=1`);
   const sec = (d.stats || [])[0];
@@ -1268,9 +1346,129 @@ async function fetchCareerSplit(pid, group, tf) {
 }
 
 async function fetchLastX(pid, group, n) {
-  const d = await jc(`${API}/people/${pid}/stats?stats=lastXGames&limit=${n}&group=${group}&sportId=1`);
+  const d = await jc(`${statsBase(pid)}/stats?stats=lastXGames&limit=${n}&group=${group}&sportId=1`);
   const sec = (d.stats || [])[0];
   return sec && sec.splits && sec.splits.length ? sec.splits[0].stat : null;
+}
+
+// ---- Months: current season only, and Game Log: click/shift-click a season's games — both ported
+// from the reference tool. Months is offered for both players and Team Totals; Game Log (which
+// needs a single, non-aggregate group) is player-only, matching the reference tool's own scoping.
+let modalMonthsAvail = [];        // sorted month numbers with data this season
+let modalSelectedMonths = new Set();
+const MONTH_NAMES = { 1: 'January', 2: 'February', 3: 'March', 4: 'April', 5: 'May', 6: 'June',
+  7: 'July', 8: 'August', 9: 'September', 10: 'October', 11: 'November', 12: 'December' };
+const isMonthsTf = tf => typeof tf === 'string' && tf.startsWith('months:');
+
+function monthsSplitLabel(months) {
+  months = [...months].map(Number).sort((a, b) => a - b);
+  if (months.length === 1) return (MONTH_NAMES[months[0]] || `MONTH ${months[0]}`).toUpperCase();
+  const contiguous = months.every((m, i) => i === 0 || m === months[i - 1] + 1);
+  return contiguous
+    ? `${MONTH_NAMES[months[0]]}–${MONTH_NAMES[months[months.length - 1]]}`.toUpperCase()
+    : months.map(m => MONTH_NAMES[m]).join(', ').toUpperCase();
+}
+
+async function loadMonthsAvailable(pid, groups) {
+  const months = new Set();
+  await Promise.all(groups.map(async g => {
+    try {
+      const d = await jc(`${statsBase(pid)}/stats?stats=byMonth&group=${g}&season=${$('season').value}&sportId=1`);
+      ((d.stats || [])[0]?.splits || []).forEach(sp => { if (sp.month) months.add(+sp.month); });
+    } catch {}
+  }));
+  return [...months].sort((a, b) => a - b);
+}
+
+async function fetchMonthsAgg(pid, group, tf) {
+  const months = tf.slice(7).split(',').map(Number);
+  const d = await jc(`${statsBase(pid)}/stats?stats=byMonth&group=${group}&season=${$('season').value}&sportId=1`);
+  const byMonth = new Map();
+  ((d.stats || [])[0]?.splits || []).forEach(sp => { if (sp.month) byMonth.set(+sp.month, sp.stat); });
+  const parts = months.map(m => byMonth.get(m)).filter(Boolean);
+  return parts.length ? aggregateFor(group, parts) : null;
+}
+
+function paintMonthsPicker() {
+  const box = $('monthsRow'); if (!box) return;
+  if (!modalMonthsAvail.length) { box.innerHTML = '<span class="modal-empty">No months found yet this season.</span>'; return; }
+  const applyLabel = modalSelectedMonths.size > 1 ? `Apply (${modalSelectedMonths.size})` : 'Apply';
+  box.innerHTML = modalMonthsAvail.map(m =>
+    `<button type="button" class="tf-pill${modalSelectedMonths.has(m) ? ' on' : ''}" data-month="${m}">${MONTH_NAMES[m]}</button>`
+  ).join('') + `<button type="button" class="tf-pill" id="monthsApply"${modalSelectedMonths.size ? '' : ' disabled'}>${applyLabel}</button>`;
+  box.querySelectorAll('button[data-month]').forEach(b => {
+    b.onclick = () => {
+      const m = +b.dataset.month;
+      if (modalSelectedMonths.has(m)) modalSelectedMonths.delete(m); else modalSelectedMonths.add(m);
+      paintMonthsPicker();
+    };
+  });
+  const applyBtn = $('monthsApply');
+  if (applyBtn) applyBtn.onclick = () => {
+    if (!modalSelectedMonths.size) return;
+    modalTf = 'months:' + [...modalSelectedMonths].sort((a, b) => a - b).join(',');
+    modalSince = ''; modalRangeFrom = ''; modalRangeTo = ''; modalLastX = 0;
+    modalSeasons = new Set([String($('season').value)]);
+    paintSeasonPicker(); paintTfPills(); loadModalStats();
+  };
+}
+
+// Game log: one season's games, click to toggle, shift-click for a contiguous range.
+let modalGameLogGames = [];
+let modalSelectedGameIndices = new Set();
+let modalLastClickedGameIndex = null;
+const isGameLogTf = tf => typeof tf === 'string' && tf.startsWith('gamelog:');
+
+function gameLogDateStr(dateStr) {
+  const d = new Date(dateStr + 'T12:00');
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+function gameLogStatLine(stat, isPitcher) {
+  if (isPitcher) return `${stat.inningsPitched} IP, ${stat.earnedRuns} ER, ${stat.strikeOuts} K`;
+  const hr = +stat.homeRuns || 0, rbi = +stat.rbi || 0;
+  let line = `${stat.hits}-${stat.atBats}`;
+  if (hr > 0) line += `, ${hr}HR`;
+  if (rbi > 0) line += `, ${rbi}RBI`;
+  return line;
+}
+async function loadGameLogSeason(pid, group, season) {
+  const d = await jc(`${statsBase(pid)}/stats?stats=gameLog&group=${group}&season=${season}&sportId=1`).catch(() => null);
+  const splits = (d && d.stats && d.stats[0] && d.stats[0].splits) || [];
+  return splits.map(s => ({
+    gamePk: s.game && s.game.gamePk, date: s.date,
+    opp: (s.opponent && s.opponent.name) || '', isHome: !!s.isHome, stat: s.stat,
+  })).filter(g => g.gamePk && g.date).sort((a, b) => a.date.localeCompare(b.date));
+}
+async function fetchGameLogAgg(pid, group, tf) {
+  const [, season, pksStr] = tf.split(':');
+  const gamePks = pksStr.split(',').map(Number);
+  const games = await loadGameLogSeason(pid, group, season);
+  const selected = games.filter(g => gamePks.includes(g.gamePk));
+  return selected.length ? aggregateFor(group, selected.map(g => g.stat)) : null;
+}
+function renderGameLogSelection() {
+  $('modalGameLogList').querySelectorAll('.modal-gamelog-row').forEach(r => {
+    r.classList.toggle('active', modalSelectedGameIndices.has(+r.dataset.idx));
+  });
+  const btn = $('modalGameLogApply');
+  btn.disabled = !modalSelectedGameIndices.size;
+  btn.textContent = modalSelectedGameIndices.size > 1 ? `Apply (${modalSelectedGameIndices.size})` : 'Apply';
+}
+function loadGameLogForSeason(pid, group, season) {
+  modalSelectedGameIndices = new Set(); modalLastClickedGameIndex = null;
+  $('modalGameLogApply').disabled = true; $('modalGameLogApply').textContent = 'Apply';
+  $('modalGameLogList').innerHTML = '<div class="modal-empty" style="padding:12px">Loading…</div>';
+  loadGameLogSeason(pid, group, season).then(games => {
+    if (modalPid !== pid) return;
+    modalGameLogGames = games;
+    if (!games.length) { $('modalGameLogList').innerHTML = '<div class="modal-empty" style="padding:12px">No games found.</div>'; return; }
+    $('modalGameLogList').innerHTML = games.map((g, i) =>
+      `<div class="modal-gamelog-row" data-idx="${i}">
+        <span class="modal-gamelog-date">${gameLogDateStr(g.date)}</span>
+        <span class="modal-gamelog-opp">${g.isHome ? 'vs' : '@'} ${g.opp}</span>
+        <span class="modal-gamelog-line">${gameLogStatLine(g.stat, group === 'pitching')}</span>
+      </div>`).join('');
+  });
 }
 
 // MLB's team object only carries the full "City Nickname" string, so a short label needs a table.
@@ -1535,13 +1733,17 @@ async function paintTeamMatchupBox() {
 // ---- Notable rankings ---------------------------------------------------------------------
 // Categories confirmed against the live leaders endpoint. MLB-wide is checked first (the better
 // framing); AL/NL only matter when the MLB-wide rank isn't notable.
+// Third/fourth elements (raw field name, lower-is-better) are only used by the second-half bulk
+// scan and the team-level ranking scan below, since those two pull a whole-league/whole-league-teams
+// pool at once and rank client-side rather than hitting the per-category leaders endpoint.
 const RANK_CATEGORIES_BAT = [
-  ['homeRuns', 'Home Runs'], ['runsBattedIn', 'RBI'], ['battingAverage', 'AVG'],
-  ['onBasePercentage', 'OBP'], ['sluggingPercentage', 'SLG'], ['onBasePlusSlugging', 'OPS'],
-  ['runs', 'Runs'], ['stolenBases', 'Stolen Bases'],
+  ['homeRuns', 'Home Runs', 'homeRuns'], ['runsBattedIn', 'RBI', 'rbi'], ['battingAverage', 'AVG', 'avg'],
+  ['onBasePercentage', 'OBP', 'obp'], ['sluggingPercentage', 'SLG', 'slg'], ['onBasePlusSlugging', 'OPS', 'ops'],
+  ['runs', 'Runs', 'runs'], ['stolenBases', 'Stolen Bases', 'stolenBases'],
 ];
 const RANK_CATEGORIES_PIT = [
-  ['era', 'ERA'], ['whip', 'WHIP'], ['wins', 'Wins'], ['saves', 'Saves'], ['strikeouts', 'Strikeouts'],
+  ['era', 'ERA', 'era', true], ['whip', 'WHIP', 'whip', true], ['wins', 'Wins', 'wins'],
+  ['saves', 'Saves', 'saves'], ['strikeouts', 'Strikeouts', 'strikeOuts'],
 ];
 const RANK_NOTABLE_MAX = 10;
 
@@ -1561,7 +1763,57 @@ async function findPlayerRank(pid, category, group, leagueId) {
   return hit ? { rank: hit.rank, value: hit.value } : null;
 }
 
-async function findNotableRankings(pid, isPitcher) {
+// MLB's leaders endpoint silently ignores startDate/endDate, so "since the break" leaders can't be
+// asked for directly — one bulk whole-league pull (same shape used for team rankings below) is
+// ranked client-side instead. Also used for position-scoped defensive extremes (most/fewest errors
+// at the same position, with a games/innings qualifier the leaders endpoint has no way to express).
+function rankInBulkPool(pool, pid, field, ascending) {
+  const withValue = pool
+    .map(s => ({ pid: s.player && s.player.id, raw: s.stat && s.stat[field], value: s.stat && s.stat[field] != null ? parseFloat(s.stat[field]) : NaN }))
+    .filter(r => r.pid && !isNaN(r.value));
+  const mine = withValue.find(r => String(r.pid) === String(pid));
+  if (!mine) return null;
+  const better = withValue.filter(r => ascending ? r.value < mine.value : r.value > mine.value).length;
+  const tiedCount = withValue.filter(r => r.value === mine.value).length;
+  return { rank: better + 1, value: mine.raw, tied: tiedCount > 1 };
+}
+
+async function fetchSecondHalfPool(group) {
+  const start = await getSecondHalfStart($('season').value);
+  if (!start) return [];
+  const end = new Date().toISOString().slice(0, 10);
+  const d = await j(`${API}/stats?stats=byDateRange&group=${group}&season=${$('season').value}&sportId=1&startDate=${start}&endDate=${end}&playerPool=ALL&limit=5000&gameType=R`).catch(() => null);
+  return ((d && d.stats && d.stats[0] && d.stats[0].splits) || []);
+}
+
+// Position-specific defensive extremes — most/fewest errors among players with real playing time
+// at the SAME position. OAA/Runs Saved are ported but left paused (OAA_RANKINGS_PAUSED), matching
+// the reference tool's own current state: it found an unresolved discrepancy between MLB's live OAA
+// number and Baseball Savant's percentile display for the same player/season and switched it off
+// rather than risk showing something wrong on air.
+const POSITION_RANK_NOTABLE_MAX = 5;
+const POSITION_ERROR_QUALIFY_INNINGS = 300;
+const OAA_RANKINGS_PAUSED = true;
+async function fetchLeagueFieldingPool() {
+  const d = await jc(`${API}/stats?stats=season&group=fielding&season=${$('season').value}&sportId=1&playerPool=ALL&limit=5000&gameType=R`);
+  return ((d.stats && d.stats[0] && d.stats[0].splits) || []).map(s => ({
+    pid: s.player && s.player.id, pos: s.position && s.position.abbreviation,
+    errors: +((s.stat || {}).errors) || 0, innings: +((s.stat || {}).innings) || 0,
+  })).filter(r => r.pid && r.pos);
+}
+function rankInPool(pool, pid, pos, valueKey, qualifyKey, qualifyMin, ascending) {
+  const qualified = pool.filter(r => r.pos === pos && r[qualifyKey] >= qualifyMin);
+  const mine = qualified.find(r => String(r.pid) === String(pid));
+  if (!mine) return null;
+  const better = qualified.filter(r => ascending ? r[valueKey] < mine[valueKey] : r[valueKey] > mine[valueKey]).length;
+  const tiedCount = qualified.filter(r => r[valueKey] === mine[valueKey]).length;
+  return { rank: better + 1, value: mine[valueKey], tied: tiedCount > 1 };
+}
+
+// MLB-wide first (the more impressive frame when it applies); AL/NL only checked when MLB-wide
+// isn't notable. `position` (added for parity with the reference tool) additionally checks
+// same-position defensive extremes; `isPitcher` selects the stat category set as before.
+async function findNotableRankings(pid, isPitcher, position) {
   const categories = isPitcher ? RANK_CATEGORIES_PIT : RANK_CATEGORIES_BAT;
   const group = isPitcher ? 'pitching' : 'hitting';
   const results = await Promise.all(categories.map(async ([cat, label]) => {
@@ -1578,7 +1830,46 @@ async function findNotableRankings(pid, isPitcher) {
     }
     return hits;
   }));
-  return results.flat().sort((a, b) => a.rank - b.rank).slice(0, 12);
+  const hits = results.flat();
+
+  const secondHalfPool = await fetchSecondHalfPool(group).catch(() => []);
+  if (secondHalfPool.length) {
+    categories.forEach(([, label, field, lowerIsBetter]) => {
+      if (!field) return;
+      const r = rankInBulkPool(secondHalfPool, pid, field, !!lowerIsBetter);
+      if (r && r.rank <= RANK_NOTABLE_MAX) hits.push({ scope: 'MLB (2nd Half)', label, rank: r.rank, value: r.value });
+    });
+  }
+
+  if (position) {
+    const fieldingPool = await fetchLeagueFieldingPool().catch(() => []);
+    const worstErr = rankInPool(fieldingPool, pid, position, 'errors', 'innings', POSITION_ERROR_QUALIFY_INNINGS, false);
+    if (worstErr && worstErr.rank <= POSITION_RANK_NOTABLE_MAX)
+      hits.push({ scope: `${position} (Most)`, label: 'Errors', rank: worstErr.rank, value: worstErr.value });
+    const bestErr = rankInPool(fieldingPool, pid, position, 'errors', 'innings', POSITION_ERROR_QUALIFY_INNINGS, true);
+    if (bestErr && bestErr.rank <= POSITION_RANK_NOTABLE_MAX)
+      hits.push({ scope: `${position} (Fewest)`, label: 'Errors', rank: bestErr.rank, value: bestErr.value });
+    // OAA/Runs Saved intentionally left out while OAA_RANKINGS_PAUSED is true — see comment above.
+  }
+
+  return hits.sort((a, b) => a.rank - b.rank).slice(0, 12);
+}
+
+// Team-level rankings: no per-team "leaders" endpoint exists, so one bulk /teams/stats pull (every
+// team's full line at once) is ranked client-side the same way as the second-half player scan above.
+async function findTeamNotableRankings(teamId, group) {
+  const d = await jc(`${API}/teams/stats?stats=season&group=${group}&season=${$('season').value}&sportId=1`).catch(() => null);
+  const splits = (d && d.stats && d.stats[0] && d.stats[0].splits) || [];
+  const pool = splits.map(s => ({ player: s.team, stat: s.stat }));
+  const categories = group === 'pitching' ? RANK_CATEGORIES_PIT : RANK_CATEGORIES_BAT;
+  const hits = categories.map(([, label, field, lowerIsBetter]) => {
+    if (!field) return null;
+    const r = rankInBulkPool(pool, teamId, field, !!lowerIsBetter);
+    return r && r.rank <= RANK_NOTABLE_MAX
+      ? { scope: 'MLB', label: group === 'pitching' ? `Pitching ${label}` : label, rank: r.rank, value: r.value }
+      : null;
+  }).filter(Boolean);
+  return hits.sort((a, b) => a.rank - b.rank).slice(0, 10);
 }
 
 function buildRankGraphicData(r) {
@@ -1586,6 +1877,57 @@ function buildRankGraphicData(r) {
   const words = `IN ${r.scope} IN ${r.label} (${r.value})`;
   return { label: `${ord} in ${r.scope} in ${r.label} (${r.value})`, splitLabel: '',
            sentenceMode: true, cells: [[words, ord.toUpperCase()]] };
+}
+
+// ---- Awards --------------------------------------------------------------------------------
+// Confirmed live (by the reference tool) against MLB's hydrate=awards: it returns a full history
+// including minor-league honors, far too noisy for a broadcast. Whitelists specific major-award
+// name patterns; everything else is dropped unless it's a recent (within the window below)
+// monthly/weekly honor. MLB's API has no award-voting-placement data at all, so "3rd in Cy Young
+// voting"-style results genuinely can't be built from this data source.
+const MAJOR_AWARD_PATTERNS = [
+  /^(AL|NL) MVP$/i, /^(AL|NL) Cy Young$/i, /^(AL|NL) Rookie of the Year$/i,
+  /Jackie Robinson (AL|NL)? ?Rookie of the Year/i, /^(AL|NL) All-Star$/i,
+  /Gold Glove/i, /Silver Slugger/i, /Home Run Derby Winner/i,
+  /^(AL|NL)CS MVP$/i, /World Series MVP/i, /All-Star.*MVP/i,
+  /Manager of the Year/i, /Comeback Player of the Year/i, /Reliever of the Year/i,
+  /Roberto Clemente Award/i, /Hank Aaron Award/i,
+];
+const RECENT_AWARD_PATTERNS = [/Player of the (Week|Month)$/i, /Rookie of the (Week|Month)$/i, /Pitcher of the (Week|Month)$/i];
+const RECENT_AWARD_WINDOW_DAYS = 365;
+
+async function fetchPlayerAwards(pid) {
+  const d = await jc(`${API}/people/${pid}?hydrate=awards`).catch(() => null);
+  const p = d && d.people && d.people[0];
+  return (p && p.awards) || [];
+}
+function filterNotableAwards(awards) {
+  const cutoff = Date.now() - RECENT_AWARD_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+  return awards.filter(a => {
+    if (MAJOR_AWARD_PATTERNS.some(re => re.test(a.name))) return true;
+    if (RECENT_AWARD_PATTERNS.some(re => re.test(a.name))) {
+      const t = Date.parse(a.date);
+      return !isNaN(t) && t >= cutoff;
+    }
+    return false;
+  });
+}
+// Individual instances first, with a grouped "Nx Award Name" option appended for anything won
+// more than once — an addition alongside the individual entries, not a replacement.
+function buildAwardOptions(awards) {
+  const sorted = [...awards].sort((a, b) =>
+    (b.season || '').localeCompare(a.season || '') || (Date.parse(b.date) || 0) - (Date.parse(a.date) || 0));
+  const individual = sorted.map(a => ({ kind: 'single', name: a.name, season: a.season }));
+  const counts = new Map();
+  sorted.forEach(a => counts.set(a.name, (counts.get(a.name) || 0) + 1));
+  const grouped = [...counts.entries()].filter(([, n]) => n > 1).map(([name, n]) => ({ kind: 'group', name, count: n }));
+  return [...individual, ...grouped];
+}
+function buildAwardGraphicData(o) {
+  if (o.kind === 'group') return { label: `${o.count}x ${o.name}`, splitLabel: '', sentenceMode: true,
+    cells: [[o.name.toUpperCase(), `${o.count}X`]] };
+  return { label: `${o.season} ${o.name}`, splitLabel: '', sentenceMode: true,
+    cells: [[o.name.toUpperCase(), String(o.season)]] };
 }
 
 // ---- Team tenure --------------------------------------------------------------------------
@@ -1632,7 +1974,9 @@ async function fetchYankeeStadium(pid, group) {
 }
 
 const isYankeeStadiumTf = tf => tf === 'yankstad';
-const showsYankeeStadium = row => !!row && String(row.teamId) === String(YANKEES_TEAM_ID);
+// Team Totals never shows this tab — a team's "home park" identity is Yankee Stadium already
+// covered by the plain Home split, and the reference tool doesn't offer it at the team level either.
+const showsYankeeStadium = row => !!row && !row.isTeam && String(row.teamId) === String(YANKEES_TEAM_ID);
 
 
 async function fetchScopedStat(pid, group, tf) {
@@ -1642,6 +1986,8 @@ async function fetchScopedStat(pid, group, tf) {
   if (isLastXTf(tf)) return fetchLastX(pid, group, +tf.split(':')[1]).catch(() => null);
   if (isRangeTf(tf)) { const [, f, t] = tf.split(':'); return fetchRange(pid, group, f, t).catch(() => null); }
   if (isYankeeStadiumTf(tf)) return fetchYankeeStadium(pid, group).catch(() => null);
+  if (isMonthsTf(tf)) return fetchMonthsAgg(pid, group, tf).catch(() => null);
+  if (isGameLogTf(tf)) return fetchGameLogAgg(pid, group, tf).catch(() => null);
   if (modalSince) return fetchSince(pid, group, modalSince);
   const years = modalSeasons.size ? [...modalSeasons] : [$('season').value];
   const parts = await Promise.all(years.map(y => fetchStat(pid, group, tf, y).catch(() => null)));
@@ -1665,6 +2011,8 @@ function scopedSplitLabel(tf, group) {
   if (isCareerSplit(tf)) return CAREER_SPLIT_NAME[tf];
   if (isLastXTf(tf)) return `LAST ${tf.split(':')[1]} GAMES`;
   if (isRangeTf(tf)) { const [, f, t] = tf.split(':'); return `${f} \u2192 ${t}`; }
+  if (isMonthsTf(tf)) return monthsSplitLabel(tf.slice(7).split(',').map(Number));
+  if (isGameLogTf(tf)) { const n = tf.split(':')[2].split(',').length; return `${n} SELECTED GAME${n === 1 ? '' : 'S'}`; }
   const scope = scopeLabel();
   if (tf === 'season') return scope;
   return `${scope} \u00b7 ${tfLabel(tf, scope, group)}`;
@@ -1673,30 +2021,39 @@ function scopedSplitLabel(tf, group) {
 function paintSeasonPicker() {
   const box = $('seasonPicker');
   if (!box) return;
+  // Custom date range and Last-N-games are player-only, matching the reference tool's own
+  // modalCustomRangeSection/modalLastNSection scoping (hidden in its Team Total modal) — a team's
+  // "last 10 games" isn't a single coherent scope the way it is for one player.
+  const isTeam = modalRow && modalRow.isTeam;
   const chips = modalSeasonList.map(y =>
     `<button type="button" class="tf-pill${modalSeasons.has(y) && !modalSince ? ' on' : ''}" data-year="${y}">${y}</button>`
   ).join('');
   const today = new Date().toISOString().slice(0, 10);
-  box.innerHTML =
-    `<div class="scope-row">${chips || '<span class="modal-empty">No season history found.</span>'}</div>` +
-    `<div class="scope-row scope-since">
-       <label for="rangeFrom">Date range</label>
-       <input type="date" id="rangeFrom" max="${today}" value="${modalRangeFrom}">
-       <span class="modal-empty">to</span>
-       <input type="date" id="rangeTo" max="${today}" value="${modalRangeTo || today}">
-       <button type="button" class="tf-pill" id="rangeApply">Apply</button>
-       <button type="button" class="tf-pill" id="scopeClear">Reset</button>
-     </div>` +
-    `<div class="scope-row scope-since">
-       <label for="lastXInput">Last</label>
-       <input type="number" id="lastXInput" min="1" max="200" value="${modalLastX || 10}" style="width:74px">
-       <span class="modal-empty">games</span>
-       <button type="button" class="tf-pill" id="lastXApply">Apply</button>
-       <span class="modal-empty" id="scopeNote">Showing: ${scopeLabel()}</span>
-     </div>`;
+  box.innerHTML = `<div class="scope-row">${chips || '<span class="modal-empty">No season history found.</span>'}</div>`;
+  if (!isTeam) {
+    box.innerHTML +=
+      `<div class="scope-row scope-since">
+         <label for="rangeFrom">Date range</label>
+         <input type="date" id="rangeFrom" max="${today}" value="${modalRangeFrom}">
+         <span class="modal-empty">to</span>
+         <input type="date" id="rangeTo" max="${today}" value="${modalRangeTo || today}">
+         <button type="button" class="tf-pill" id="rangeApply">Apply</button>
+         <button type="button" class="tf-pill" id="scopeClear">Reset</button>
+       </div>` +
+      `<div class="scope-row scope-since">
+         <label for="lastXInput">Last</label>
+         <input type="number" id="lastXInput" min="1" max="200" value="${modalLastX || 10}" style="width:74px">
+         <span class="modal-empty">games</span>
+         <button type="button" class="tf-pill" id="lastXApply">Apply</button>
+         <span class="modal-empty" id="scopeNote">Showing: ${scopeLabel()}</span>
+       </div>`;
+  } else {
+    box.innerHTML += `<div class="scope-row scope-since"><span class="modal-empty" id="scopeNote">Showing: ${scopeLabel()}</span></div>`;
+  }
   box.querySelectorAll('button[data-year]').forEach(b => {
     b.onclick = () => {
       modalSince = '';
+      modalSelectedMonths.clear(); paintMonthsPicker();
       const y = b.dataset.year;
       if (modalSeasons.has(y)) modalSeasons.delete(y); else modalSeasons.add(y);
       if (!modalSeasons.size) modalSeasons.add(y);   // never leave the scope empty
@@ -1733,6 +2090,17 @@ function paintSeasonPicker() {
   };
 }
 
+// Which modal sections apply depends on what's open: a real player gets every feature; a Team
+// Totals aggregate gets the core series/season/splits/months/rankings experience (all confirmed to
+// work identically at the team level via /teams/{id}/stats) but not the player-only extras that
+// have no coherent team-level meaning (L/R comparisons, team tenure, custom range, last-N, game
+// log, awards, opponent matchup search) — same split the reference tool draws for its own Team
+// Total modal.
+function setModalMode(mode) {
+  const playerOnlyIds = ['lrRow', 'awardsFindRow', 'awardsRow', 'gameLogSection', 'teamRow', 'matchupRow', 'matchupResults'];
+  playerOnlyIds.forEach(id => { const e = $(id); if (e) e.hidden = mode !== 'player'; });
+}
+
 async function openPlayerModal(pid, matchupOppTeamId) {
   const row = currentIndex.get(String(pid));
   if (!row) return;
@@ -1740,9 +2108,11 @@ async function openPlayerModal(pid, matchupOppTeamId) {
   modalSince = ''; modalRangeFrom = ''; modalRangeTo = ''; modalLastX = 0;
   modalSeasons = new Set([String($('season').value)]);
   modalSeasonList = [];
+  modalSelectedMonths = new Set(); modalMonthsAvail = [];
   // only set when opened from the BvP Matchup Builder — every other entry point (roster,
   // search, position browsing) opens with this cleared, so the table stays hidden there.
   modalMatchupOppTeamId = matchupOppTeamId || null;
+  setModalMode('player');
   $('modalDlNote').textContent = '';
   $('modalHeadshot').src = headshotURL(pid);
   $('modalName').textContent = row.name;
@@ -1751,15 +2121,65 @@ async function openPlayerModal(pid, matchupOppTeamId) {
   // size the preview stage now that the modal has a width, then show current on-air state
   requestAnimationFrame(() => { const pv = previewRoot(); if (pv) fitPreviewStage(pv); });
   $('rankRow').hidden = true; $('rankRow').innerHTML = '';
+  $('awardsRow').hidden = true; $('awardsRow').innerHTML = '';
   $('teamRow').innerHTML = '';
   paintSeasonPicker();
+  paintMonthsPicker();
   paintTfPills();
   wireModalExtras();
   paintTeamMatchupBox();   // independent of the split/season scope below — runs in the background
   await loadModalStats();
   // season history is only needed for the picker, so it loads alongside rather than blocking stats
+  // (Months loads separately, inside wireModalExtras, since that same fetch also serves Team Totals)
   const groups = [wantsBatting(row) ? 'hitting' : null, wantsPitching(row) ? 'pitching' : null].filter(Boolean);
   const list = await fetchSeasonList(pid, groups);
+  if (modalPid !== pid) return;
+  modalSeasonList = list.length ? list : [String($('season').value)];
+  paintSeasonPicker();
+  // Game log defaults to the current season; the dropdown fills in with the rest of the player's
+  // career once the Seasons list (fetched above, for the Seasons-combine feature) is known.
+  const gameLogGroup = wantsBatting(row) ? 'hitting' : 'pitching';
+  const glYears = modalSeasonList.length ? modalSeasonList : [String($('season').value)];
+  $('modalGameLogSeason').innerHTML = glYears.map(y =>
+    `<option value="${y}"${y === String($('season').value) ? ' selected' : ''}>${y}</option>`).join('');
+  $('modalGameLogSeason').onchange = () => loadGameLogForSeason(pid, gameLogGroup, +$('modalGameLogSeason').value);
+  loadGameLogForSeason(pid, gameLogGroup, +$('season').value);
+}
+
+// =====================================================================================
+// Team Totals — the whole-roster aggregate modal ported from the reference tool's
+// openTeamTotalModal/TEAM_SPLITS, wired to Trade Snapshot's own data layer. A synthetic
+// "team:<id>" pid (see statsBase/isTeamPid above) routes every existing fetch helper to
+// /teams/{id}/stats instead of /people/{pid}/stats, so this reuses openPlayerModal's entire stat
+// pipeline (loadModalStats, autoPushOnAir, downloadGraphic, the on-air preview) rather than
+// duplicating it — the same raw-counts-first aggregation already used everywhere else in this file
+// (aggregateBatting/aggregatePitching derive rates from summed counts, never averaged rates), since
+// /teams/{id}/stats already returns the whole roster's numbers pre-aggregated server-side by MLB.
+async function openTeamTotalsModal(team) {
+  const pid = `team:${team.id}`;
+  modalPid = pid;
+  modalRow = { id: pid, name: team.name, pos: '', team: team.name, number: '', teamId: team.id, isTeam: true };
+  modalTf = 'season';
+  modalSince = ''; modalRangeFrom = ''; modalRangeTo = ''; modalLastX = 0;
+  modalSeasons = new Set([String($('season').value)]);
+  modalSeasonList = [];
+  modalSelectedMonths = new Set(); modalMonthsAvail = [];
+  modalMatchupOppTeamId = null;
+  setModalMode('team');
+  $('teamMatchupBox').hidden = true; $('teamMatchupBox').innerHTML = '';   // BvP table is player-only
+  $('modalDlNote').textContent = '';
+  $('modalHeadshot').src = logoURL(team.id);
+  $('modalName').textContent = team.name;
+  $('modalSub').textContent = 'Team Totals';
+  $('modalBackdrop').hidden = false;
+  requestAnimationFrame(() => { const pv = previewRoot(); if (pv) fitPreviewStage(pv); });
+  $('rankRow').hidden = true; $('rankRow').innerHTML = '';
+  paintSeasonPicker();
+  paintMonthsPicker();
+  paintTfPills();
+  wireModalExtras();
+  await loadModalStats();
+  const list = await fetchSeasonList(pid, ['hitting', 'pitching']);
   if (modalPid !== pid) return;
   modalSeasonList = list.length ? list : [String($('season').value)];
   paintSeasonPicker();
@@ -1767,17 +2187,21 @@ async function openPlayerModal(pid, matchupOppTeamId) {
 
 function paintTfPills() {
   const box = $('tfPills'); box.innerHTML = '';
+  const isTeam = modalRow && modalRow.isTeam;
   const add = (key, label) => {
     const b = el('button', 'tf-pill' + (key === modalTf ? ' on' : ''), label);
     b.type = 'button';
     b.onclick = () => {
       modalTf = key; modalSince = '';
+      modalSelectedMonths.clear(); paintMonthsPicker();
       paintSeasonPicker(); paintTfPills(); loadModalStats();
     };
     box.appendChild(b);
   };
-  TF.forEach(([key, label]) => add(key, label));
-  CAREER_SPLITS.forEach(([key, label]) => add(key, label));
+  // Team Totals has no team-level "career" concept and no career-situational splits (careerStatSplits
+  // has no team equivalent) — matches the reference tool's own Team Total modal, which excludes both.
+  TF.forEach(([key, label]) => { if (isTeam && key === 'career') return; add(key, label); });
+  if (!isTeam) CAREER_SPLITS.forEach(([key, label]) => add(key, label));
   if (showsYankeeStadium(modalRow)) add('yankstad', 'AT YANKEE STADIUM');
 }
 
@@ -1847,94 +2271,163 @@ function pushCustomGraphic(data, kindHint) {
 }
 
 function wireModalExtras() {
-  const row = $('lrRow');
-  row.querySelectorAll('button[data-lr]').forEach(b => {
-    b.onclick = async () => {
-      const pid = modalPid, r = modalRow;
-      $('modalDlNote').textContent = 'Loading L/R split\u2026';
-      const data = await buildLRCompareData(pid, r, b.dataset.lr).catch(() => null);
-      if (modalPid !== pid) return;
-      if (!data) { $('modalDlNote').textContent = 'No lefty/righty split available for this player.'; return; }
-      pushCustomGraphic(data, wantsPitching(r) && !wantsBatting(r) ? 'pit' : 'bat');
-    };
-  });
+  const isTeam = modalRow && modalRow.isTeam;
 
+  if (!isTeam) {
+    const row = $('lrRow');
+    row.querySelectorAll('button[data-lr]').forEach(b => {
+      b.onclick = async () => {
+        const pid = modalPid, r = modalRow;
+        $('modalDlNote').textContent = 'Loading L/R split\u2026';
+        const data = await buildLRCompareData(pid, r, b.dataset.lr).catch(() => null);
+        if (modalPid !== pid) return;
+        if (!data) { $('modalDlNote').textContent = 'No lefty/righty split available for this player.'; return; }
+        pushCustomGraphic(data, wantsPitching(r) && !wantsBatting(r) ? 'pit' : 'bat');
+      };
+    });
+
+    // Awards \u2014 same two-step "find, then click a pill" flow as Notable Rankings above, rather
+    // than the reference tool's dropdown-plus-Apply control, for consistency with the rest of
+    // this modal's existing idiom (see the report's "what's different" notes).
+    $('awardsFind').onclick = async () => {
+      const pid = modalPid;
+      const box = $('awardsRow');
+      box.hidden = false;
+      box.innerHTML = '<span class="modal-empty">Checking awards\u2026</span>';
+      const raw = await fetchPlayerAwards(pid).catch(() => []);
+      if (modalPid !== pid) return;
+      const opts = buildAwardOptions(filterNotableAwards(raw));
+      if (!opts.length) { box.innerHTML = '<span class="modal-empty">No notable awards found.</span>'; return; }
+      box.innerHTML = '';
+      opts.forEach(o => {
+        const label = o.kind === 'group' ? `${o.count}x ${o.name}` : `${o.season} ${o.name}`;
+        const b = el('button', 'tf-pill', label);
+        b.type = 'button';
+        b.onclick = () => pushCustomGraphic(buildAwardGraphicData(o), wantsPitching(modalRow) && !wantsBatting(modalRow) ? 'pit' : 'bat');
+        box.appendChild(b);
+      });
+    };
+
+    // team tenure loads in the background; the row simply stays empty if there's only one club
+    (async () => {
+      const pid = modalPid, r = modalRow;
+      const group = wantsPitching(r) && !wantsBatting(r) ? 'pitching' : 'hitting';
+      const teams = await fetchTeamTenure(pid, group).catch(() => []);
+      if (modalPid !== pid || teams.length < 2) return;
+      const box = $('teamRow');
+      box.innerHTML = '<label>Team tenure</label>';
+      teams.forEach(t => {
+        const b = el('button', 'tf-pill', nickOf(t.name));
+        b.type = 'button';
+        b.onclick = () => {
+          const label = `CAREER WITH ${nickOf(t.name).toUpperCase()}`;
+          const st = t.stat;
+          const gp = st.gamesPlayed != null ? st.gamesPlayed : null;
+          const data = group === 'pitching'
+            ? { label, splitLabel: label, cells: [['IP', st.inningsPitched], ['ERA', st.era], ['WHIP', st.whip],
+                ['K', st.strikeOuts], ['BB', st.baseOnBalls], ['W-L', `${st.wins}-${st.losses}`]] }
+            : { label, splitLabel: label,
+                hitLine: gp != null ? `${gp} games (${st.hits}-for-${st.atBats})` : `${st.hits}-for-${st.atBats}`,
+                cells: [
+                ['AVG', st.avg], ['OBP', st.obp], ['SLG', st.slg], ['OPS', st.ops],
+                ['HR', st.homeRuns], ['RBI', st.rbi]] };
+          pushCustomGraphic(data, group === 'pitching' ? 'pit' : 'bat');
+        };
+        box.appendChild(b);
+      });
+    })();
+
+    // opponent search reuses the already-loaded league-wide player index, so it's instant and
+    // needs no extra API calls just to offer suggestions
+    let mDeb = null;
+    $('matchupSearch').value = '';
+    $('matchupResults').innerHTML = '';
+    $('matchupSearch').oninput = () => {
+      clearTimeout(mDeb);
+      const q = $('matchupSearch').value.trim().toLowerCase();
+      mDeb = setTimeout(() => {
+        const box = $('matchupResults');
+        if (q.length < 3) { box.innerHTML = ''; return; }
+        const hits = allPlayers.filter(p => p.name.toLowerCase().includes(q) && String(p.id) !== String(modalPid)).slice(0, 6);
+        box.innerHTML = '';
+        if (!hits.length) { box.innerHTML = '<span class="modal-empty">No match.</span>'; return; }
+        hits.forEach(op => {
+          const b = el('button', 'tf-pill', `${op.name} (${op.pos})`);
+          b.type = 'button';
+          b.onclick = async () => {
+            const pid = modalPid, r = modalRow;
+            $('modalDlNote').textContent = 'Loading matchup\u2026';
+            const data = await buildMatchupData(pid, r, op.id, op.name).catch(() => null);
+            if (modalPid !== pid) return;
+            if (!data) { $('modalDlNote').textContent = `No career matchup data vs. ${op.name}.`; return; }
+            pushCustomGraphic(data, wantsPitching(r) && !wantsBatting(r) ? 'pit' : 'bat');
+          };
+          box.appendChild(b);
+        });
+      }, 150);
+    };
+
+    $('modalGameLogList').onclick = e => {
+      const rowEl = e.target.closest('.modal-gamelog-row'); if (!rowEl) return;
+      const idx = +rowEl.dataset.idx;
+      if (e.shiftKey && modalLastClickedGameIndex !== null) {
+        const [lo, hi] = [modalLastClickedGameIndex, idx].sort((a, b) => a - b);
+        for (let i = lo; i <= hi; i++) modalSelectedGameIndices.add(i);
+      } else {
+        if (modalSelectedGameIndices.has(idx)) modalSelectedGameIndices.delete(idx);
+        else modalSelectedGameIndices.add(idx);
+        modalLastClickedGameIndex = idx;
+      }
+      renderGameLogSelection();
+    };
+    $('modalGameLogApply').onclick = () => {
+      if (!modalSelectedGameIndices.size) return;
+      const gamePks = [...modalSelectedGameIndices].map(i => modalGameLogGames[i].gamePk);
+      modalTf = `gamelog:${$('modalGameLogSeason').value}:${gamePks.join(',')}`;
+      modalSince = ''; modalSelectedMonths.clear(); paintMonthsPicker();
+      paintSeasonPicker(); paintTfPills(); loadModalStats();
+    };
+  }
+
+  // Notable rankings \u2014 wired for both a player (position-aware, per findNotableRankings above)
+  // and a Team Total (findTeamNotableRankings, checked for both the offense and pitching lines).
   $('rankFind').onclick = async () => {
     const pid = modalPid, r = modalRow;
     const box = $('rankRow');
     box.hidden = false;
     box.innerHTML = '<span class="modal-empty">Checking leaderboards\u2026</span>';
-    const isPit = wantsPitching(r) && !wantsBatting(r);
-    const hits = await findNotableRankings(pid, isPit).catch(() => []);
+    let hits, isPit = false;
+    if (r.isTeam) {
+      const [batHits, pitHits] = await Promise.all([
+        findTeamNotableRankings(r.teamId, 'hitting').catch(() => []),
+        findTeamNotableRankings(r.teamId, 'pitching').catch(() => []),
+      ]);
+      hits = [...batHits, ...pitHits].sort((a, b) => a.rank - b.rank).slice(0, 12);
+    } else {
+      isPit = wantsPitching(r) && !wantsBatting(r);
+      hits = await findNotableRankings(pid, isPit, r.pos).catch(() => []);
+    }
     if (modalPid !== pid) return;
     if (!hits.length) { box.innerHTML = '<span class="modal-empty">Not top 10 in any tracked category.</span>'; return; }
     box.innerHTML = '';
     hits.forEach(h => {
       const b = el('button', 'tf-pill', `${ordinal(h.rank)} ${h.scope} ${h.label}`);
       b.type = 'button';
-      b.onclick = () => pushCustomGraphic(buildRankGraphicData(h), isPit ? 'pit' : 'bat');
+      b.onclick = () => pushCustomGraphic(buildRankGraphicData(h), r.isTeam ? (String(h.label).startsWith('Pitching') ? 'pit' : 'bat') : (isPit ? 'pit' : 'bat'));
       box.appendChild(b);
     });
   };
 
-  // team tenure loads in the background; the row simply stays empty if there's only one club
+  // Months \u2014 wired for both player and Team Total; the fetch itself already routes through
+  // statsBase(pid), so no team-specific branch is needed here.
   (async () => {
     const pid = modalPid, r = modalRow;
-    const group = wantsPitching(r) && !wantsBatting(r) ? 'pitching' : 'hitting';
-    const teams = await fetchTeamTenure(pid, group).catch(() => []);
-    if (modalPid !== pid || teams.length < 2) return;
-    const box = $('teamRow');
-    box.innerHTML = '<label>Team tenure</label>';
-    teams.forEach(t => {
-      const b = el('button', 'tf-pill', nickOf(t.name));
-      b.type = 'button';
-      b.onclick = () => {
-        const label = `CAREER WITH ${nickOf(t.name).toUpperCase()}`;
-        const st = t.stat;
-        const gp = st.gamesPlayed != null ? st.gamesPlayed : null;
-        const data = group === 'pitching'
-          ? { label, splitLabel: label, cells: [['IP', st.inningsPitched], ['ERA', st.era], ['WHIP', st.whip],
-              ['K', st.strikeOuts], ['BB', st.baseOnBalls], ['W-L', `${st.wins}-${st.losses}`]] }
-          : { label, splitLabel: label,
-              hitLine: gp != null ? `${gp} games (${st.hits}-for-${st.atBats})` : `${st.hits}-for-${st.atBats}`,
-              cells: [
-              ['AVG', st.avg], ['OBP', st.obp], ['SLG', st.slg], ['OPS', st.ops],
-              ['HR', st.homeRuns], ['RBI', st.rbi]] };
-        pushCustomGraphic(data, group === 'pitching' ? 'pit' : 'bat');
-      };
-      box.appendChild(b);
-    });
+    const groups = [wantsBatting(r) ? 'hitting' : null, wantsPitching(r) ? 'pitching' : null].filter(Boolean);
+    modalSelectedMonths = new Set();
+    modalMonthsAvail = await loadMonthsAvailable(pid, groups).catch(() => []);
+    if (modalPid !== pid) return;
+    paintMonthsPicker();
   })();
-
-  // opponent search reuses the already-loaded league-wide player index, so it's instant and
-  // needs no extra API calls just to offer suggestions
-  let mDeb = null;
-  $('matchupSearch').value = '';
-  $('matchupResults').innerHTML = '';
-  $('matchupSearch').oninput = () => {
-    clearTimeout(mDeb);
-    const q = $('matchupSearch').value.trim().toLowerCase();
-    mDeb = setTimeout(() => {
-      const box = $('matchupResults');
-      if (q.length < 3) { box.innerHTML = ''; return; }
-      const hits = allPlayers.filter(p => p.name.toLowerCase().includes(q) && String(p.id) !== String(modalPid)).slice(0, 6);
-      box.innerHTML = '';
-      if (!hits.length) { box.innerHTML = '<span class="modal-empty">No match.</span>'; return; }
-      hits.forEach(op => {
-        const b = el('button', 'tf-pill', `${op.name} (${op.pos})`);
-        b.type = 'button';
-        b.onclick = async () => {
-          const pid = modalPid, r = modalRow;
-          $('modalDlNote').textContent = 'Loading matchup\u2026';
-          const data = await buildMatchupData(pid, r, op.id, op.name).catch(() => null);
-          if (modalPid !== pid) return;
-          if (!data) { $('modalDlNote').textContent = `No career matchup data vs. ${op.name}.`; return; }
-          pushCustomGraphic(data, wantsPitching(r) && !wantsBatting(r) ? 'pit' : 'bat');
-        };
-        box.appendChild(b);
-      });
-    }, 150);
-  };
 }
 
 function closeModal() { $('modalBackdrop').hidden = true; }
@@ -2006,7 +2499,7 @@ async function renderLowerThird(data, row, pid) {
     document.fonts.load('700 18px "Sofia Sans Extra Condensed"'),
     document.fonts.load('800 40px "Sofia Sans Extra Condensed"'),
   ]);
-  const img = await loadSafeImage(headshotURL(pid));
+  const img = await loadSafeImage(payloadImageURL(pid));
 
   const CW = 1920, CH = 1080, W = 1920, H = 200, BOTTOM_MARGIN = 60;
   const canvas = document.createElement('canvas'); canvas.width = CW; canvas.height = CH;
@@ -2286,7 +2779,7 @@ function paintOnAirBar(root, payload) {
   const { name, pos, team, number, data } = payload;
   const q = sel => root.querySelector(sel);
   const bar = q('.lt-bar');
-  q('.lt-headshot').src = headshotURL(payload.pid);
+  q('.lt-headshot').src = payloadImageURL(payload.pid);
   q('.lt-name').textContent = name.toUpperCase();
   q('.lt-sub').textContent = [pos, team, number ? `#${number}` : ''].filter(Boolean).join('  \u00b7  ').toUpperCase();
   const hitEl = q('.lt-hitline');
