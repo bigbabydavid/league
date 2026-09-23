@@ -475,6 +475,14 @@ const jc = u => (jCache.has(u) ? jCache.get(u) : (jCache.set(u, j(u)), jCache.ge
 const $ = id => document.getElementById(id);
 const el = (t, cls, txt) => { const e = document.createElement(t); if(cls) e.className = cls; if(txt != null) e.textContent = txt; return e; };
 
+// Diacritic-insensitive name compare, used by every player-name search box (global search + the
+// modal's "Career vs. opponent" search) so typing "jose" matches "José" and typing "José" matches
+// a plain "Jose" in the data, in either direction — the way Baseball-Reference's own search works.
+// normalize('NFD') splits a character into base + combining marks (e.g. 'é' -> 'e' + U+0301, and
+// 'ñ' -> 'n' + U+0303), so stripping the combining-diacritical-marks range leaves the bare base
+// letter on both sides of the comparison.
+const normName = s => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+
 // ---- control ↔ display link ----
 // The OBS Browser Source runs in its own isolated browser process, so localStorage and
 // BroadcastChannel (which only reach other tabs in the SAME browser) can't reach it.
@@ -573,6 +581,29 @@ async function loadPlayerIndex(year) {
     number: p.primaryNumber || '', teamId: p.currentTeam ? p.currentTeam.id : null,
     teamName: (p.currentTeam && p.currentTeam.name) || '',
   })).filter(p => p.teamId);
+}
+
+// Cross-era player lookup: `allPlayers` (above) only ever covers whoever was on an active MLB
+// roster for the currently-selected #season, so it can never surface a retired player or a player
+// from a different year no matter what's typed. MLB StatsAPI's people/search endpoint is NOT
+// season-scoped — it searches every person in its database, active or not — so both player-name
+// search boxes (global search + the modal's "Career vs. opponent" box) call this to extend their
+// results beyond the current season's index. Same defensive `&&`-then-`||` field-building pattern
+// as loadPlayerIndex above, so an API player with a missing currentTeam/position/number never
+// produces a bare `undefined` that later breaks a Firebase write (see stripUndefinedDeep).
+async function apiPlayerSearch(q) {
+  if (!q || !q.trim()) return [];
+  try {
+    const d = await j(`${API}/people/search?names=${encodeURIComponent(q.trim())}`);
+    return (d.people || []).map(p => ({
+      id: p.id, name: p.fullName,
+      pos: (p.primaryPosition && p.primaryPosition.abbreviation) || '',
+      number: p.primaryNumber || '',
+      teamId: (p.currentTeam && p.currentTeam.id) || null,
+      teamName: (p.currentTeam && p.currentTeam.name) || '',
+      active: !!p.active,
+    }));
+  } catch (e) { return []; }
 }
 
 // currentTeam frequently comes back with an id but no name, so always resolve the display name
@@ -967,17 +998,14 @@ let currentIndex = new Map(); // pid -> {id,name,pos,team,teamId}, used by the p
 let rosterState = null;       // {team, year, rows} — cached so column-header sorts don't refetch
 let searchState = null;       // {query, teamGroups, total, limit} — same, for search results
 let sortState = { table: null, key: null, dir: 1 };
+let searchApiDebounce = null; // debounce timer for the cross-era people/search augmentation below
+let searchApiSeq = 0;         // guards a slow/stale API response from clobbering a newer query
 
-function renderSearchResults(query) {
-  const q = query.trim().toLowerCase();
-  if (!q) { searchState = null; renderLanding(); return; }
-  currentView = 'search';
-  setTeamBadge(null);
-  let matches = allPlayers.filter(p => p.name.toLowerCase().includes(q));
+// Builds (or clears) searchState from an already-filtered player list and paints it — shared by
+// the instant local-only pass and the later API-augmented pass below, so both render identically.
+function setSearchState(query, matches, emptyMsg) {
   if (posFilter) matches = matches.filter(p => p.pos === posFilter);
-  say('');
-  if (!matches.length) { searchState = null; addTable(`Search — "${query}"`, null,
-    posFilter ? `No ${posFilter} matched that search — clear the position filter to widen it.` : 'No players matched that search.'); return; }
+  if (!matches.length) { searchState = null; addTable(`Search — "${query}"`, null, emptyMsg); return; }
 
   const LIMIT = 80;
   const shown = matches.slice(0, LIMIT);
@@ -995,6 +1023,44 @@ function renderSearchResults(query) {
   paintSearch();
 }
 
+// Merges the season-scoped local index with the cross-era API results, deduping by player id and
+// preferring the local (season-index) copy of a player when both sources return them, since it
+// already carries richer team data than a bare API-search hit.
+function mergeSearchMatches(localMatches, apiExtra) {
+  const seen = new Set(localMatches.map(p => String(p.id)));
+  const extra = apiExtra.filter(p => !seen.has(String(p.id)));
+  return localMatches.concat(extra);
+}
+
+function renderSearchResults(query) {
+  const q = normName(query);
+  if (!q) { searchState = null; clearTimeout(searchApiDebounce); searchApiSeq++; renderLanding(); return; }
+  currentView = 'search';
+  setTeamBadge(null);
+  say('');
+  const emptyMsg = posFilter ? `No ${posFilter} matched that search — clear the position filter to widen it.` : 'No players matched that search.';
+  const localMatches = allPlayers.filter(p => normName(p.name).includes(q));
+  // Instant pass: whatever's already in the season-scoped index, filtered client-side with no
+  // network round trip, so typing never feels laggy.
+  setSearchState(query, localMatches, emptyMsg);
+
+  // Second pass, debounced ~250ms (same pattern used by the modal's opponent search below): reach
+  // past the currently-loaded #season via MLB's cross-era people/search endpoint so retired players
+  // and players from other seasons show up too, merged into the same result list. Skipped for
+  // 1-character queries so every keystroke doesn't hammer the API.
+  clearTimeout(searchApiDebounce);
+  if (q.length < 2) return;
+  const seq = ++searchApiSeq;
+  searchApiDebounce = setTimeout(() => {
+    guard(async () => {
+      const extra = await apiPlayerSearch(query);
+      // a newer keystroke (new debounce cycle) or a cleared box already superseded this response
+      if (seq !== searchApiSeq || normName($('find').value) !== q) return;
+      setSearchState(query, mergeSearchMatches(localMatches, extra), emptyMsg);
+    })();
+  }, 250);
+}
+
 function paintSearch() {
   if (!searchState) return;
   const { query, title, teamGroups, total, limit } = searchState;
@@ -1010,7 +1076,7 @@ function paintSearch() {
   const active = sortState.table === 'search' ? sortState : null;
   teamGroups.forEach(({ team, players }) => {
     const trG = el('tr', 'group');
-    const tdG = el('td', null, team ? team.name : 'Unknown Team'); tdG.colSpan = 4;
+    const tdG = el('td', null, team ? team.name : 'Unknown Team / Retired'); tdG.colSpan = 4;
     trG.appendChild(tdG); tbody.appendChild(trG);
     const rows = active && active.key ? sortRows(players, active.key, active.dir)
                                        : [...players].sort((a, b) => a.name.localeCompare(b.name));
@@ -2231,6 +2297,15 @@ async function openPlayerModal(pid, matchupOppTeamId) {
   const list = await fetchSeasonList(pid, groups);
   if (modalPid !== pid) return;
   modalSeasonList = list.length ? list : [String($('season').value)];
+  // A retired/historical player found via the year-independent search won't have played in
+  // whatever season is globally selected on the page (modalSeasons was seeded with that value
+  // above, before this list was known) — default to their most recent season with data instead
+  // of silently stacking the empty global season into the scope with no chip to remove it.
+  if (list.length && !list.includes(String($('season').value))) {
+    modalSeasons = new Set([list[0]]);   // fetchSeasonList returns years most-recent-first
+    paintTfPills();
+    loadModalStats();
+  }
   paintSeasonPicker();
   // Game log defaults to the current season; the dropdown fills in with the rest of the player's
   // career once the Seasons list (fetched above, for the Seasons-combine feature) is known.
@@ -2433,34 +2508,47 @@ function wireModalExtras() {
       });
     })();
 
-    // opponent search reuses the already-loaded league-wide player index, so it's instant and
-    // needs no extra API calls just to offer suggestions
-    let mDeb = null;
+    // opponent search starts from the already-loaded league-wide player index (instant, no network
+    // call) and then augments with MLB's cross-era people/search endpoint so a retired or
+    // off-season opponent (e.g. a Hall of Famer no longer on any roster) can still be found for a
+    // career matchup \u2014 same endpoint/debounce/sequence-guard pattern as the global search above.
+    let mDeb = null, mSeq = 0;
     $('matchupSearch').value = '';
     $('matchupResults').innerHTML = '';
+    const paintMatchupHits = hits => {
+      const box = $('matchupResults');
+      box.innerHTML = '';
+      if (!hits.length) { box.innerHTML = '<span class="modal-empty">No match.</span>'; return; }
+      hits.forEach(op => {
+        const b = el('button', 'tf-pill', `${op.name} (${op.pos || '\u2014'})`);
+        b.type = 'button';
+        b.onclick = async () => {
+          const pid = modalPid, r = modalRow;
+          $('modalDlNote').textContent = 'Loading matchup\u2026';
+          const data = await buildMatchupData(pid, r, op.id, op.name).catch(() => null);
+          if (modalPid !== pid) return;
+          if (!data) { $('modalDlNote').textContent = `No career matchup data vs. ${op.name}.`; return; }
+          pushCustomGraphic(data, wantsPitching(r) && !wantsBatting(r) ? 'pit' : 'bat');
+        };
+        box.appendChild(b);
+      });
+    };
     $('matchupSearch').oninput = () => {
       clearTimeout(mDeb);
-      const q = $('matchupSearch').value.trim().toLowerCase();
+      const raw = $('matchupSearch').value.trim();
+      const q = normName(raw);
       mDeb = setTimeout(() => {
         const box = $('matchupResults');
         if (q.length < 3) { box.innerHTML = ''; return; }
-        const hits = allPlayers.filter(p => p.name.toLowerCase().includes(q) && String(p.id) !== String(modalPid)).slice(0, 6);
-        box.innerHTML = '';
-        if (!hits.length) { box.innerHTML = '<span class="modal-empty">No match.</span>'; return; }
-        hits.forEach(op => {
-          const b = el('button', 'tf-pill', `${op.name} (${op.pos})`);
-          b.type = 'button';
-          b.onclick = async () => {
-            const pid = modalPid, r = modalRow;
-            $('modalDlNote').textContent = 'Loading matchup\u2026';
-            const data = await buildMatchupData(pid, r, op.id, op.name).catch(() => null);
-            if (modalPid !== pid) return;
-            if (!data) { $('modalDlNote').textContent = `No career matchup data vs. ${op.name}.`; return; }
-            pushCustomGraphic(data, wantsPitching(r) && !wantsBatting(r) ? 'pit' : 'bat');
-          };
-          box.appendChild(b);
+        const mySeq = ++mSeq;
+        const localHits = allPlayers.filter(p => normName(p.name).includes(q) && String(p.id) !== String(modalPid));
+        paintMatchupHits(localHits.slice(0, 6));
+        apiPlayerSearch(raw).then(extra => {
+          if (mySeq !== mSeq) return;   // a newer keystroke already superseded this response
+          const filteredExtra = extra.filter(p => String(p.id) !== String(modalPid));
+          paintMatchupHits(mergeSearchMatches(localHits, filteredExtra).slice(0, 6));
         });
-      }, 150);
+      }, 250);
     };
 
     $('modalGameLogList').onclick = e => {
