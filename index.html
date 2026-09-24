@@ -1609,24 +1609,25 @@ async function fetchVsPlayerStat(pid, group, oppId) {
   const sec = (d.stats || [])[0];
   return sec && sec.splits && sec.splits.length ? sec.splits[0].stat : null;
 }
-function matchupGraphicFromStat(st, oppName, isPitcher) {
+// MLB's vsPlayer endpoint always comes back as the BATTER's line in the confrontation — the
+// `group` param requested doesn't change that (confirmed live: a pitcher's own vsPlayer stat
+// still has .hits/.atBats/.avg, never .inningsPitched). Reading it as a pitcher's "allowed" line
+// used to reach for fields that plain don't exist on that shape, so a pitcher's modal pushed a
+// broken graphic. Always present it as the hitter's statline, whichever modal it's opened from —
+// that's genuinely the only shape this data comes in, and it's the one people recognize on sight.
+function matchupGraphicFromStat(st, oppName) {
   if (!st) return null;
   const label = `CAREER VS. ${oppName.toUpperCase()}`;
-  if (!isPitcher) {
-    // raw K/BB counts beat rates at matchup sample sizes — "3 K" reads better than "33%"
-    return { label, splitLabel: label, hitLine: `${st.hits}-for-${st.atBats}`, cells: [
-      ['AVG', st.avg], ['OBP', st.obp], ['SLG', st.slg], ['OPS', st.ops],
-      ['K', +st.strikeOuts || 0], ['BB', +st.baseOnBalls || 0], ['HR', +st.homeRuns || 0]] };
-  }
-  return { label, splitLabel: label, hitLine: `${st.hits}-for-${st.atBats} allowed`, cells: [
-    ['IP', st.inningsPitched], ['H', st.hits], ['BB', st.baseOnBalls],
-    ['K', st.strikeOuts], ['HR', st.homeRuns], ['AVG', st.avg]] };
+  // raw K/BB counts beat rates at matchup sample sizes — "3 K" reads better than "33%"
+  return { label, splitLabel: label, hitLine: `${st.hits}-for-${st.atBats}`, cells: [
+    ['AVG', st.avg], ['OBP', st.obp], ['SLG', st.slg], ['OPS', st.ops],
+    ['K', +st.strikeOuts || 0], ['BB', +st.baseOnBalls || 0], ['HR', +st.homeRuns || 0]] };
 }
 async function buildMatchupData(pid, row, oppId, oppName) {
   const isPitcher = wantsPitching(row) && !wantsBatting(row);
   const group = isPitcher ? 'pitching' : 'hitting';
   const st = await fetchVsPlayerStat(pid, group, oppId);
-  return matchupGraphicFromStat(st, oppName, isPitcher);
+  return matchupGraphicFromStat(st, oppName);
 }
 
 // =====================================================================================
@@ -1780,11 +1781,13 @@ function wireMatchupTableClicks(box, rows, isPitcherAnchor) {
   box.querySelectorAll('tr.matchup-row:not(.dim)').forEach((tr, i) => {
     tr.onclick = () => {
       const { opp, st } = rows[i];
-      const data = matchupGraphicFromStat(st, opp.name, isPitcherAnchor);
+      const data = matchupGraphicFromStat(st, opp.name);
       if (!data) return;
       box.querySelectorAll('tr.matchup-row.on').forEach(x => x.classList.remove('on'));
       tr.classList.add('on');
-      pushOnAir(modalPid, isPitcherAnchor ? 'pit' : 'bat', modalRow, data);
+      // always pushed as a hitter's statline (see matchupGraphicFromStat) — 'bat' regardless of
+      // which side of the matchup this modal was opened from
+      pushOnAir(modalPid, 'bat', modalRow, data);
       $('modalDlNote').textContent = `On air: ${data.label}`;
     };
   });
@@ -2528,7 +2531,8 @@ function wireModalExtras() {
           const data = await buildMatchupData(pid, r, op.id, op.name).catch(() => null);
           if (modalPid !== pid) return;
           if (!data) { $('modalDlNote').textContent = `No career matchup data vs. ${op.name}.`; return; }
-          pushCustomGraphic(data, wantsPitching(r) && !wantsBatting(r) ? 'pit' : 'bat');
+          // always a hitter's statline (see matchupGraphicFromStat) — 'bat' regardless of anchor
+          pushCustomGraphic(data, 'bat');
         };
         box.appendChild(b);
       });
