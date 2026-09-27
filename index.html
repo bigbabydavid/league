@@ -1606,8 +1606,33 @@ async function buildLRCompareData(pid, row, tier) {
 // shape this single-opponent search has always pushed to air.
 async function fetchVsPlayerStat(pid, group, oppId) {
   const d = await jc(`${API}/people/${pid}/stats?stats=vsPlayer&opposingPlayerId=${oppId}&group=${group}&sportId=1`);
-  const sec = (d.stats || [])[0];
-  return sec && sec.splits && sec.splits.length ? sec.splits[0].stat : null;
+  const stats = d.stats || [];
+  const findType = name => stats.find(s => s.type && s.type.displayName === name);
+  // MLB's response order between "vsPlayerTotal" (one combined-career split) and "vsPlayer" (broken
+  // out per season) isn't guaranteed — confirmed live against the real API: the exact same real-world
+  // matchup came back with either type listed first depending on which side of it was queried.
+  // Reading stats[0] positionally silently grabbed whichever happened to come first, so the same
+  // matchup could show the real career total from one player's modal and a single season's partial
+  // line from the other's. Look up by name instead, and prefer the total MLB already computed.
+  const total = findType('vsPlayerTotal');
+  if (total && total.splits && total.splits.length) return total.splits[0].stat;
+  // No vsPlayerTotal at all (rare) — fall back to the per-season breakdown, summing raw counts
+  // ourselves (ab/h/bb/etc.) rather than averaging rates, same approach as aggregateBatting/
+  // matchupTotals elsewhere in this file — never just take one season's line as if it were the whole.
+  const bySeason = findType('vsPlayer');
+  const seasons = ((bySeason && bySeason.splits) || []).map(sp => sp.stat).filter(Boolean);
+  if (!seasons.length) return null;
+  if (seasons.length === 1) return seasons[0];
+  const sum = k => seasons.reduce((a, st) => a + (+st[k] || 0), 0);
+  const ab = sum('atBats'), h = sum('hits'), bb = sum('baseOnBalls'), hbp = sum('hitByPitch'),
+        sf = sum('sacFlies'), tb = sum('totalBases');
+  const obpDen = ab + bb + hbp + sf;
+  const obp = obpDen ? (h + bb + hbp) / obpDen : 0, slg = ab ? tb / ab : 0;
+  return {
+    atBats: ab, hits: h, doubles: sum('doubles'), triples: sum('triples'), homeRuns: sum('homeRuns'),
+    rbi: sum('rbi'), baseOnBalls: bb, strikeOuts: sum('strikeOuts'),
+    avg: fmt3(ab ? h / ab : 0), obp: fmt3(obp), slg: fmt3(slg), ops: fmt3(obp + slg),
+  };
 }
 // MLB's vsPlayer endpoint always comes back as the BATTER's line in the confrontation — the
 // `group` param requested doesn't change that (confirmed live: a pitcher's own vsPlayer stat
