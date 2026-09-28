@@ -290,6 +290,26 @@
   .lt-bar.lt-visible{opacity:1}
   .lt-headshot{width:152px;height:152px;border-radius:50%;object-fit:cover;background:#153157;
     border:5px solid #F5F7FA;flex:none}
+  /* Matchup graphics (BvP pushes) show both players' headshots side by side in the same corner
+     the single headshot normally occupies, instead of adding a second name label elsewhere — both
+     names (and the record) move up into the one combined line above the stats instead. */
+  .lt-headshot-wrap{position:relative;width:152px;height:152px;flex:none}
+  .lt-headshot-wrap .lt-headshot{position:absolute;top:0;left:0}
+  .lt-headshot-wrap .lt-headshot-b{position:absolute;width:152px;height:152px;border-radius:50%;
+    object-fit:cover;background:#153157;border:5px solid #F5F7FA;display:none}
+  .lt-headshot-wrap.lt-matchup{width:320px}
+  .lt-headshot-wrap.lt-matchup .lt-headshot{width:136px;height:136px;top:8px;left:0}
+  .lt-headshot-wrap.lt-matchup .lt-headshot-b{display:block;width:136px;height:136px;top:8px;left:184px}
+  /* small "VS" badge centered in the gap between the two headshots */
+  .lt-headshot-wrap .lt-vs{display:none;position:absolute;top:0;left:136px;width:48px;height:152px;
+    align-items:center;justify-content:center;font-family:"Sofia Sans Extra Condensed",sans-serif;
+    font-weight:800;font-size:18px;color:#F5F7FA;text-transform:uppercase;letter-spacing:.5px;
+    text-shadow:0 1px 3px rgba(0,0,0,.6);z-index:3}
+  .lt-headshot-wrap.lt-matchup .lt-vs{display:flex}
+  /* the anchor's own name/sub next to the headshots is redundant once both names are already up
+     in the label row above the stats — hide that column for matchups so the freed width goes to
+     the bigger headshots above instead of sitting empty */
+  .lt-bar.lt-matchup-bar .lt-info{display:none}
   .lt-info{flex:none; min-width:0}
   .lt-name{font-family:"Anton",sans-serif;font-size:56px;line-height:1.05;color:#F5F7FA;white-space:nowrap}
   .lt-sub{font-family:"Sofia Sans Extra Condensed",sans-serif;font-weight:700;font-size:20px;
@@ -424,7 +444,11 @@
       <div class="modal-preview-wrap" id="modalPreviewFrame">
         <div class="modal-preview-stage">
           <div class="lt-bar">
-            <img class="lt-headshot" alt="">
+            <div class="lt-headshot-wrap">
+              <img class="lt-headshot" alt="">
+              <img class="lt-headshot-b" alt="">
+              <div class="lt-vs">VS</div>
+            </div>
             <div class="lt-info">
               <div class="lt-name"></div>
               <div class="lt-sub"></div>
@@ -446,7 +470,11 @@
 <!-- OBS Browser Source view: add this same file/URL with ?display=1 as a Browser Source. -->
 <div id="lowerThirdDisplay">
   <div class="lt-bar" id="ltBar">
-    <img id="ltHeadshot" class="lt-headshot" alt="">
+    <div class="lt-headshot-wrap" id="ltHeadshotWrap">
+      <img id="ltHeadshot" class="lt-headshot" alt="">
+      <img id="ltHeadshotB" class="lt-headshot-b" alt="">
+      <div class="lt-vs">VS</div>
+    </div>
     <div class="lt-info">
       <div class="lt-name" id="ltName"></div>
       <div class="lt-sub" id="ltSub"></div>
@@ -1640,11 +1668,18 @@ async function fetchVsPlayerStat(pid, group, oppId) {
 // used to reach for fields that plain don't exist on that shape, so a pitcher's modal pushed a
 // broken graphic. Always present it as the hitter's statline, whichever modal it's opened from —
 // that's genuinely the only shape this data comes in, and it's the one people recognize on sight.
-function matchupGraphicFromStat(st, oppName) {
+// `matchup: true` + `oppPid` tell paintOnAirBar/renderLowerThird to draw both players' headshots
+// and a combined "X VS. Y" name line instead of the usual single-player treatment.
+function matchupGraphicFromStat(st, oppName, oppId) {
   if (!st) return null;
   const label = `CAREER VS. ${oppName.toUpperCase()}`;
+  const pa = st.plateAppearances != null ? +st.plateAppearances
+    : (+st.atBats || 0) + (+st.baseOnBalls || 0) + (+st.hitByPitch || 0) + (+st.sacFlies || 0) + (+st.sacBunts || 0);
+  // `record` (not `hitLine`) on purpose — paintOnAirBar/renderLowerThird fold this into the single
+  // combined "X VS. Y - N-for-M (P PA)" name line for matchup graphics rather than showing a
+  // separate hitline row, so leaving `hitLine`/`splitLabel` unset here keeps that row empty.
   // raw K/BB counts beat rates at matchup sample sizes — "3 K" reads better than "33%"
-  return { label, splitLabel: label, hitLine: `${st.hits}-for-${st.atBats}`, cells: [
+  return { label, matchup: true, oppPid: oppId, oppName, record: `${st.hits}-for-${st.atBats} (${pa} PA)`, cells: [
     ['AVG', st.avg], ['OBP', st.obp], ['SLG', st.slg], ['OPS', st.ops],
     ['K', +st.strikeOuts || 0], ['BB', +st.baseOnBalls || 0], ['HR', +st.homeRuns || 0]] };
 }
@@ -1652,7 +1687,7 @@ async function buildMatchupData(pid, row, oppId, oppName) {
   const isPitcher = wantsPitching(row) && !wantsBatting(row);
   const group = isPitcher ? 'pitching' : 'hitting';
   const st = await fetchVsPlayerStat(pid, group, oppId);
-  return matchupGraphicFromStat(st, oppName);
+  return matchupGraphicFromStat(st, oppName, oppId);
 }
 
 // =====================================================================================
@@ -1806,7 +1841,7 @@ function wireMatchupTableClicks(box, rows, isPitcherAnchor) {
   box.querySelectorAll('tr.matchup-row:not(.dim)').forEach((tr, i) => {
     tr.onclick = () => {
       const { opp, st } = rows[i];
-      const data = matchupGraphicFromStat(st, opp.name);
+      const data = matchupGraphicFromStat(st, opp.name, opp.id);
       if (!data) return;
       box.querySelectorAll('tr.matchup-row.on').forEach(x => x.classList.remove('on'));
       tr.classList.add('on');
@@ -2782,6 +2817,7 @@ async function renderLowerThird(data, row, pid) {
     document.fonts.load('800 40px "Sofia Sans Extra Condensed"'),
   ]);
   const img = await loadSafeImage(payloadImageURL(pid));
+  const oppImg = data.matchup ? await loadSafeImage(payloadImageURL(data.oppPid)) : null;
 
   const CW = 1920, CH = 1080, W = 1920, H = 200, BOTTOM_MARGIN = 60;
   const canvas = document.createElement('canvas'); canvas.width = CW; canvas.height = CH;
@@ -2794,30 +2830,48 @@ async function renderLowerThird(data, row, pid) {
   for (let x = 0; x < W; x += 26) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
   ctx.fillStyle = '#F5F7FA'; ctx.fillRect(0, 0, W, 5);
 
-  const cx = 112, cy = H / 2, r = 76;
-  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.closePath();
-  if (img) {
-    ctx.save(); ctx.clip();
-    const size = r * 2, scale = Math.max(size / img.width, size / img.height);
-    const iw = img.width * scale, ih = img.height * scale;
-    ctx.drawImage(img, cx - iw / 2, cy - ih / 2, iw, ih);
-    ctx.restore();
-  } else {
-    ctx.fillStyle = '#153157'; ctx.fill();
-    ctx.fillStyle = '#93a5c2'; ctx.font = '700 16px "Sofia Sans Extra Condensed"';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('NO PHOTO', cx, cy);
-  }
-  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.lineWidth = 5; ctx.strokeStyle = '#F5F7FA'; ctx.stroke();
+  const drawHeadshot = (cx, cy, r, image) => {
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.closePath();
+    if (image) {
+      ctx.save(); ctx.clip();
+      const size = r * 2, scale = Math.max(size / image.width, size / image.height);
+      const iw = image.width * scale, ih = image.height * scale;
+      ctx.drawImage(image, cx - iw / 2, cy - ih / 2, iw, ih);
+      ctx.restore();
+    } else {
+      ctx.fillStyle = '#153157'; ctx.fill();
+      ctx.fillStyle = '#93a5c2'; ctx.font = '700 16px "Sofia Sans Extra Condensed"';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('NO PHOTO', cx, cy);
+    }
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.lineWidth = 5; ctx.strokeStyle = '#F5F7FA'; ctx.stroke();
+  };
 
+  // Same side-by-side layout the live preview draws for matchups — two full-size circles next
+  // to each other in the corner instead of one, using the room freed up by skipping the
+  // anchor-only name/sub line below (redundant once both names are in the label row instead).
   const nx = 226;
-  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
-  ctx.fillStyle = '#F5F7FA'; ctx.font = '62px Anton';
-  ctx.fillText(row.name.toUpperCase(), nx, 124);
-  ctx.fillStyle = '#93a5c2'; ctx.font = '700 20px "Sofia Sans Extra Condensed"';
-  ctx.fillText([row.pos, row.team, row.number ? `#${row.number}` : ''].filter(Boolean).join('  ·  ').toUpperCase(), nx, 156);
+  if (data.matchup) {
+    // Same 136px-circle / 48px-gap layout the live preview draws, with a small "VS" badge
+    // centered in the gap between the two headshots.
+    drawHeadshot(104, H / 2, 68, img);
+    drawHeadshot(288, H / 2, 68, oppImg);
+    ctx.fillStyle = '#F5F7FA'; ctx.font = '800 18px "Sofia Sans Extra Condensed"';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('VS', 196, H / 2);
+  } else {
+    drawHeadshot(112, H / 2, 76, img);
+    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = '#F5F7FA'; ctx.font = '62px Anton';
+    ctx.fillText(row.name.toUpperCase(), nx, 124);
+    ctx.fillStyle = '#93a5c2'; ctx.font = '700 20px "Sofia Sans Extra Condensed"';
+    ctx.fillText([row.pos, row.team, row.number ? `#${row.number}` : ''].filter(Boolean).join('  ·  ').toUpperCase(), nx, 156);
+  }
 
-  const divX = 800;
+  // Reclaim the space the name/sub column would have used when it's hidden for matchups — the
+  // divider (and everything right of it) shifts left, matching the reflow the live DOM bar gets
+  // for free from removing that flex child.
+  const divX = data.matchup ? 420 : 800;
   ctx.strokeStyle = '#26426e'; ctx.lineWidth = 2;
   ctx.beginPath(); ctx.moveTo(divX, 34); ctx.lineTo(divX, H - 34); ctx.stroke();
 
@@ -2826,12 +2880,15 @@ async function renderLowerThird(data, row, pid) {
   const startX = divX + 30, avail = W - MARK_RESERVE - 20 - startX;
 
   // split name (white, e.g. "LAST 30 DAYS") and the hits-for-AB count (muted, e.g. "12-FOR-72")
-  // sit side by side above the stats — either can be absent and the other still centres alone
-  if (data.splitLabel || data.hitLine) {
+  // sit side by side above the stats — either can be absent and the other still centres alone.
+  // Matchup graphics reuse this same row for "X VS. Y" + the record instead of a separate line.
+  const splitLabel = data.matchup ? `${row.name.toUpperCase()} VS. ${data.oppName.toUpperCase()}` : data.splitLabel;
+  const hitLine = data.matchup ? data.record : data.hitLine;
+  if (splitLabel || hitLine) {
     ctx.font = '700 25px "Sofia Sans Extra Condensed"';
     const parts = [];
-    if (data.splitLabel) parts.push({ text: data.splitLabel.toUpperCase(), color: '#F5F7FA' });
-    if (data.hitLine) parts.push({ text: data.hitLine.toUpperCase(), color: '#93a5c2' });
+    if (splitLabel) parts.push({ text: splitLabel.toUpperCase(), color: '#F5F7FA' });
+    if (hitLine) parts.push({ text: hitLine.toUpperCase(), color: '#93a5c2' });
     const sep = '   ·   ';
     const widths = parts.map(pp => ctx.measureText(pp.text).width);
     const sepW = ctx.measureText(sep).width;
@@ -3062,14 +3119,25 @@ function paintOnAirBar(root, payload) {
   const q = sel => root.querySelector(sel);
   const bar = q('.lt-bar');
   q('.lt-headshot').src = payloadImageURL(payload.pid);
+  // Matchup graphics only change the headshot corner (both players, side by side) and the label
+  // row above the stats (both names + the record, reusing the same slot every other graphic type
+  // already puts "CAREER VS. X · Y-FOR-Z" in) — the big name/sub line next to the headshots
+  // stays exactly the anchor player's own name, same as every other graphic on this bar.
+  const wrap = q('.lt-headshot-wrap');
+  if (wrap) wrap.classList.toggle('lt-matchup', !!data.matchup);
+  bar.classList.toggle('lt-matchup-bar', !!data.matchup);
+  if (data.matchup) q('.lt-headshot-b').src = payloadImageURL(data.oppPid);
   q('.lt-name').textContent = name.toUpperCase();
-  q('.lt-sub').textContent = [pos, team, number ? `#${number}` : ''].filter(Boolean).join('  \u00b7  ').toUpperCase();
+  q('.lt-sub').textContent = [pos, team, number ? `#${number}` : ''].filter(Boolean).join('  ·  ').toUpperCase();
+
   const hitEl = q('.lt-hitline');
+  const splitLabel = data.matchup ? `${name} vs. ${data.oppName}` : data.splitLabel;
+  const hitLine = data.matchup ? data.record : data.hitLine;
   const bits = [
-    data.splitLabel ? `<span class="lt-splitlabel">${data.splitLabel.toUpperCase()}</span>` : '',
-    data.hitLine ? `<span class="lt-hitcount">${data.hitLine.toUpperCase()}</span>` : '',
+    splitLabel ? `<span class="lt-splitlabel">${splitLabel.toUpperCase()}</span>` : '',
+    hitLine ? `<span class="lt-hitcount">${hitLine.toUpperCase()}</span>` : '',
   ].filter(Boolean);
-  hitEl.innerHTML = bits.join('  \u00b7  ');
+  hitEl.innerHTML = bits.join('  ·  ');
   hitEl.style.display = bits.length ? '' : 'none';
 
   const cellsEl = q('.lt-cells');
