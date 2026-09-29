@@ -117,6 +117,27 @@
   .abbrbar button:hover{background:#fff;color:var(--accent);text-decoration:underline}
   /* --- Baseball-Reference-style standings: two league columns, divisions stacked --- */
   .stand-wrap{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:18px;max-width:900px}
+
+  /* BvP Matchup Builder roster picker — much bigger text and position-grouped rows, since the
+     whole point of this page is scanning a full 26-man roster quickly to find one player
+     mid-broadcast, unlike the compact multi-column card grid used for browsing the whole league. */
+  .bvp-wrap{display:grid;grid-template-columns:repeat(auto-fit,minmax(440px,1fr));gap:28px;max-width:1400px}
+  .bvp-col h3{font-family:"Anton",sans-serif;font-weight:400;font-size:22px;letter-spacing:.3px;
+    margin:0 0 12px;color:var(--accent)}
+  .bvp-pos-head{font-family:"Sofia Sans Extra Condensed",sans-serif;font-weight:800;font-size:13px;
+    letter-spacing:.8px;text-transform:uppercase;color:#fff;background:var(--accent);
+    padding:6px 12px;border-radius:4px;margin:16px 0 6px}
+  .bvp-pos-head:first-child{margin-top:0}
+  .bvp-list{display:flex;flex-direction:column;gap:5px}
+  .bvp-row{display:flex;align-items:center;justify-content:space-between;gap:14px;width:100%;
+    border:1px solid var(--grid);border-radius:7px;padding:12px 16px;background:#fff;cursor:pointer;
+    text-align:left;font:inherit}
+  .bvp-row:hover{border-color:var(--accent);background:#FFF6F6}
+  .bvp-row .bvp-name{font-family:"Sofia Sans Extra Condensed",sans-serif;font-weight:800;font-size:20px;
+    color:var(--ink);line-height:1.1}
+  .bvp-row .bvp-num{color:var(--dim);font-weight:700;font-size:15px;margin-left:8px}
+  .bvp-row .bvp-pos{font-family:"Sofia Sans Extra Condensed",sans-serif;font-weight:800;font-size:14px;
+    color:#fff;background:var(--accent);border-radius:4px;padding:4px 10px;flex:none}
   .stand table{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--grid)}
   .stand th,.stand td{padding:4px 8px;border-bottom:1px solid var(--grid);font-size:14px}
   .stand thead th{background:var(--chrome);color:var(--accent);font-family:"Sofia Sans Extra Condensed",sans-serif;
@@ -420,6 +441,13 @@
         <button type="button" class="tf-pill" data-round="W">World Series</button>
       </div>
       <div class="scope-row" id="postseasonYearsRow"><span class="modal-empty">Loading postseason history…</span></div>
+      <div class="scope-row" id="postseasonGameLogRow" hidden>
+        <div style="width:100%">
+          <div class="modal-hitline">Individual games &mdash; click to select, shift-click for a range</div>
+          <div class="modal-gamelog-list" id="postseasonGameLogList"></div>
+          <div class="scope-row"><button type="button" class="tf-pill" id="postseasonGameLogApply" disabled>Apply</button></div>
+        </div>
+      </div>
       <div class="scope-row" id="matchupRow">
         <label for="matchupSearch">Career vs. opponent</label>
         <input type="text" id="matchupSearch" placeholder="Search a player…" autocomplete="off" style="flex:1;min-width:180px">
@@ -1171,6 +1199,11 @@ let modalBat = null, modalPit = null;  // currently-loaded stat objects for the 
 const kPct = (k, denom) => denom ? (k / denom * 100).toFixed(1) + '%' : '–';
 const bbPct = (bb, denom) => denom ? (bb / denom * 100).toFixed(1) + '%' : '–';
 
+// For a very short pitching span (2 games or fewer), a rate stat like "50.0% K" is misleading —
+// show the actual count instead. gamesPlayed==0/missing is treated as "unknown sample," which
+// keeps the existing rate-stat behavior rather than guessing.
+const isShortPitchingSpan = st => { const gp = +st.gamesPlayed || 0; return gp > 0 && gp <= 2; };
+
 // Clicking a stat should put a plain-English sentence on screen ("9 HOME RUNS THIS SEASON"), so
 // every clickable stat needs singular/plural words. Anything not in here simply isn't clickable.
 const TILE_WORDS = {
@@ -1232,20 +1265,22 @@ function apiBattingBlock(st, source) {
 }
 function apiPitchingBlock(st, source) {
   if (!st) return `<div class="modal-empty">No pitching stats for this range.</div>`;
+  const shortSpan = isShortPitchingSpan(st);
   return `<div class="modal-line">${st.inningsPitched} IP \u00b7 ${st.era} ERA \u00b7 ${st.wins}-${st.losses}</div>`
     + statGrid([['IP', st.inningsPitched], ['ERA', st.era], ['WHIP', st.whip], ['K', st.strikeOuts],
                 ['BB', st.baseOnBalls], ['SV', st.saves], ['ER', st.earnedRuns],
-                ['K%', kPct(st.strikeOuts, st.battersFaced)]], source, 'pitching');
+                ...(shortSpan ? [] : [['K%', kPct(st.strikeOuts, st.battersFaced)]])], source, 'pitching');
 }
 // vs-lefties/vs-righties pitching splits come back as a "batters faced" line, not a game record —
 // no ERA, no W-L, no saves (those aren't a real concept split by opposing-batter handedness).
 function apiPitchingSplitBlock(st, source) {
   if (!st) return `<div class="modal-empty">No pitching stats for this range.</div>`;
+  const shortSpan = isShortPitchingSpan(st);
   return `<div class="modal-hitline">${st.hits}-for-${st.atBats} allowed</div>`
     + `<div class="modal-line">${st.inningsPitched} IP \u00b7 ${st.whip} WHIP \u00b7 ${st.avg} BAA</div>`
     + statGrid([['IP', st.inningsPitched], ['WHIP', st.whip], ['BAA', st.avg], ['K', st.strikeOuts],
                 ['BB', st.baseOnBalls], ['HR', st.homeRuns],
-                ['K%', kPct(st.strikeOuts, st.battersFaced)]], source, 'pitching');
+                ...(shortSpan ? [] : [['K%', kPct(st.strikeOuts, st.battersFaced)]])], source, 'pitching');
 }
 
 function dateRangeFor(key) {
@@ -1346,6 +1381,19 @@ let modalPostseasonYears = {};                // { hitting: Map(year->Map(round-
 let modalSelectedPostseasonYears = new Set(); // years currently checked in the postseason years row
 let modalPostseasonAllYears = false;          // "All Years" pill — mutually exclusive with the above
 let modalPostseasonRound = 'all';             // 'all' | 'F' | 'D' | 'L' | 'W'
+// Opponent/league metadata for the postseason cache above, kept separate from the raw stat cache
+// since it's populated lazily (league comes free with the yearByYear fetch; opponent only arrives
+// once the single-game log for that exact year+round has been fetched — see loadPostseasonGameLog).
+// { hitting: Map(year->Map(round->{league, opp})), pitching: same }
+let modalPostseasonMeta = {};
+// Single-game postseason log — parallel to the regular-season modalGameLogGames/
+// modalSelectedGameIndices/modalLastClickedGameIndex above, but kept entirely separate since both
+// lists can theoretically be visible/stateful at once (the round/year picker and this list live in
+// the same modal section).
+let modalPostseasonGames = [];
+let modalSelectedPostseasonGameIndices = new Set();
+let modalLastClickedPostseasonGameIndex = null;
+let postseasonGameLogSeq = 0;   // guards against a stale fetch overwriting a newer selection
 
 const num = v => { const n = parseFloat(v); return isNaN(n) ? 0 : n; };
 // inningsPitched comes back as "62.1" meaning 62 innings + 1 out, so it can't be summed as a
@@ -1761,24 +1809,33 @@ function paintMatchupRosters() {
   // openPlayerModal looks players up in currentIndex, same as every roster/search view —
   // populate it here with both teams so clicking either roster works the normal way.
   currentIndex = new Map();
-  const wrap = el('div', 'stand-wrap');
+  // Bigger text and grouped by position (same POS_BUCKETS used for browsing the whole league)
+  // instead of the compact card grid — this page exists to scan a full roster fast mid-broadcast,
+  // so legibility and clear groupings matter more here than fitting lots of players on screen.
+  const wrap = el('div', 'bvp-wrap');
   [matchupTeamA, matchupTeamB].forEach(tid => {
     const team = teamsById.get(tid);
     const oppTeamId = tid === matchupTeamA ? matchupTeamB : matchupTeamA;
-    const col = el('div', 'stand');
+    const col = el('div', 'bvp-col');
     col.appendChild(el('h3', null, team ? team.name : 'Team'));
-    const list = allPlayers.filter(p => p.teamId === tid)
-      .sort((a, b) => posRank(a.pos) - posRank(b.pos) || a.name.localeCompare(b.name));
-    const grid = el('div', 'team-grid');
-    list.forEach(p => {
-      currentIndex.set(String(p.id), rowFromIndexPlayer(p));
-      const btn = el('button', 'team-card');
-      btn.type = 'button';
-      btn.innerHTML = `<span class="tname">${p.name}</span><span class="tcount">${p.pos}</span>`;
-      btn.onclick = () => openPlayerModal(p.id, oppTeamId);
-      grid.appendChild(btn);
+    const teamPlayers = allPlayers.filter(p => p.teamId === tid);
+    POS_BUCKETS.forEach(([label, codes]) => {
+      const inBucket = teamPlayers.filter(p => codes.includes(p.pos))
+        .sort((a, b) => posRank(a.pos) - posRank(b.pos) || a.name.localeCompare(b.name));
+      if (!inBucket.length) return;
+      col.appendChild(el('div', 'bvp-pos-head', label));
+      const list = el('div', 'bvp-list');
+      inBucket.forEach(p => {
+        currentIndex.set(String(p.id), rowFromIndexPlayer(p));
+        const btn = el('button', 'bvp-row');
+        btn.type = 'button';
+        btn.innerHTML = `<span class="bvp-name">${p.name}${p.number ? `<span class="bvp-num">#${p.number}</span>` : ''}</span>` +
+          `<span class="bvp-pos">${p.pos}</span>`;
+        btn.onclick = () => openPlayerModal(p.id, oppTeamId);
+        list.appendChild(btn);
+      });
+      col.appendChild(list);
     });
-    col.appendChild(grid);
     wrap.appendChild(col);
   });
   box.appendChild(wrap);
@@ -2099,24 +2156,45 @@ async function fetchTeamTenure(pid, group) {
 // is just as coherent a concept as a player's.
 const POSTSEASON_ROUND_NAME = { all: 'Postseason', F: 'Wild Card Series', D: 'Division Series', L: 'Championship Series', W: 'World Series' };
 
+// League-aware round name (ALDS vs. NLDS, ALCS vs. NLCS) — separate from POSTSEASON_ROUND_NAME
+// above, which is league-agnostic and stays the fallback wording for multi-league/unknown-league
+// combinations. Wild Card and World Series are never league-prefixed either way.
+function postseasonRoundDisplayName(gameType, leagueName) {
+  if (gameType === 'F') return 'Wild Card';
+  if (gameType === 'W') return 'World Series';
+  const isAL = leagueName === 'American League';
+  const isNL = leagueName === 'National League';
+  if (gameType === 'D') return isAL ? 'ALDS' : isNL ? 'NLDS' : 'Division Series';
+  if (gameType === 'L') return isAL ? 'ALCS' : isNL ? 'NLCS' : 'Championship Series';
+  return 'Postseason';
+}
+
 async function loadPostseasonYears(pid, groups) {
   const out = {};
+  const meta = {};
   await Promise.all(groups.map(async group => {
     const url = isTeamPid(pid)
       ? `${statsBase(pid)}/stats?stats=yearByYear&group=${group}&gameType=F,D,L,W&sportId=1`
       : `${statsBase(pid)}/stats?stats=yearByYear&group=${group}&gameType=F,D,L,W`;
     const d = await jc(url).catch(() => null);
     const splits = (d && d.stats && d.stats[0] && d.stats[0].splits) || [];
-    const byYear = new Map();   // year -> Map(round -> stat)
+    const byYear = new Map();     // year -> Map(round -> stat)
+    const metaByYear = new Map(); // year -> Map(round -> {league, opp}) — opp filled in lazily
     splits.forEach(s => {
       const y = +s.season, rd = s.gameType;
       if (!rd) return;
       if (!byYear.has(y)) byYear.set(y, new Map());
       byYear.get(y).set(rd, s.stat);
+      if (!metaByYear.has(y)) metaByYear.set(y, new Map());
+      // yearByYear splits already carry `league` (confirmed live against the real API), so the
+      // league-aware round name is available for free here; opponent isn't on this shape at all —
+      // that only comes from the single-game gameLog fetch (see loadPostseasonGameLog below).
+      metaByYear.get(y).set(rd, { league: (s.league && s.league.name) || '', opp: '' });
     });
     out[group] = byYear;
+    meta[group] = metaByYear;
   }));
-  return out;
+  return { years: out, meta };
 }
 
 // Raw stat lines for the requested postseason years, filtered to one round or every round that
@@ -2132,8 +2210,40 @@ function postseasonEntriesFor(byYear, years, round) {
   return entries;
 }
 
-function postseasonLabel(years, allYears, round) {
-  const roundName = (POSTSEASON_ROUND_NAME[round] || 'Postseason').toUpperCase();
+// Same shape of walk as postseasonEntriesFor above, but over the league-metadata cache instead of
+// the stat cache — used to decide whether a multi-year/round label can safely use the
+// league-qualified ALDS/NLDS/ALCS/NLCS wording (only when every included entry shares one league).
+function postseasonLeaguesFor(metaByYear, years, round) {
+  const leagues = [];
+  if (!metaByYear) return leagues;
+  years.forEach(y => {
+    const rounds = metaByYear.get(y);
+    if (!rounds) return;
+    if (round === 'all') rounds.forEach(m => leagues.push(m && m.league));
+    else if (rounds.has(round)) leagues.push((rounds.get(round) || {}).league);
+  });
+  return leagues;
+}
+
+// meta.leagues: every league name behind the years/round being combined, used for the
+// generic multi-year/round label's ALDS/NLDS/ALCS/NLCS wording (falls back to the plain name when
+// mixed or unknown). meta.oneOpp: {league, opp} when the selection is exactly one year + one
+// specific round — a guaranteed single opponent, which gets the nicer "vs. Team" phrasing instead.
+function postseasonLabel(years, allYears, round, meta) {
+  meta = meta || {};
+  if (!allYears && round !== 'all' && years.length === 1 && meta.oneOpp && meta.oneOpp.opp) {
+    const roundName = postseasonRoundDisplayName(round, meta.oneOpp.league).toUpperCase();
+    return `${years[0]} ${roundName} VS. ${nickOf(meta.oneOpp.opp).toUpperCase()}`;
+  }
+  let roundName;
+  if (round === 'D' || round === 'L') {
+    const uniqLeagues = [...new Set((meta.leagues || []).filter(Boolean))];
+    roundName = (uniqLeagues.length === 1
+      ? postseasonRoundDisplayName(round, uniqLeagues[0])
+      : (POSTSEASON_ROUND_NAME[round] || 'Postseason')).toUpperCase();
+  } else {
+    roundName = (POSTSEASON_ROUND_NAME[round] || 'Postseason').toUpperCase();
+  }
   if (allYears) return round === 'all' ? 'CAREER POSTSEASON' : `CAREER ${roundName}`;
   const sorted = [...years].map(Number).sort((a, b) => a - b);
   const isRun = sorted.length > 1 && sorted.length === sorted[sorted.length - 1] - sorted[0] + 1;
@@ -2154,19 +2264,143 @@ function buildPostseasonGraphicData(row, years, allYears, round) {
   if (!entries.length) return null;
   const combined = aggregateFor(group, entries);
   if (!combined) return null;
-  const label = postseasonLabel(yrs, allYears, round);
+  const metaByYear = modalPostseasonMeta[group];
+  const leagues = postseasonLeaguesFor(metaByYear, yrs, round);
+  let oneOpp = null;
+  if (!allYears && round !== 'all' && yrs.length === 1 && metaByYear) {
+    const rounds = metaByYear.get(yrs[0]);
+    const m = rounds && rounds.get(round);
+    if (m && m.opp) oneOpp = m;
+  }
+  const label = postseasonLabel(yrs, allYears, round, { leagues, oneOpp });
   if (group === 'pitching') {
+    const shortSpan = isShortPitchingSpan(combined);
     return { label, splitLabel: label, cells: [
       ['IP', combined.inningsPitched], ['ERA', combined.era], ['WHIP', combined.whip],
       ['W-L', `${combined.wins}-${combined.losses}`],
-      ['K%', kPct(combined.strikeOuts, combined.battersFaced)],
-      ['BB%', bbPct(combined.baseOnBalls, combined.battersFaced)] ] };
+      ...(shortSpan
+        ? [['K', combined.strikeOuts], ['BB', combined.baseOnBalls]]
+        : [['K%', kPct(combined.strikeOuts, combined.battersFaced)],
+           ['BB%', bbPct(combined.baseOnBalls, combined.battersFaced)]]) ] };
   }
   return { label, splitLabel: label, hitLine: `${combined.hits}-for-${combined.atBats}`, cells: [
     ['AVG', combined.avg], ['OBP', combined.obp], ['SLG', combined.slg], ['OPS', combined.ops],
     ['K%', kPct(combined.strikeOuts, combined.plateAppearances)],
     ['BB%', bbPct(combined.baseOnBalls, combined.plateAppearances)],
     ['HR', combined.homeRuns], ['RBI', combined.rbi] ] };
+}
+
+// ---- Postseason single-game log --------------------------------------------------------------
+// One round+year's individual games, click-to-select/shift-click-range, same interaction as the
+// regular-season game log above but kept in its own state (modalPostseasonGames etc.) so both
+// lists can be live in the same modal without colliding. No seriesGameNumber field exists on these
+// splits (confirmed live against the real API), so "Game N" is derived by sorting the round's games
+// chronologically and taking the 1-based index — same sort key loadGameLogSeason already uses.
+async function loadPostseasonGameLog(pid, group, season, round) {
+  const d = await jc(`${statsBase(pid)}/stats?stats=gameLog&group=${group}&season=${season}&gameType=${round}&sportId=1`).catch(() => null);
+  const splits = (d && d.stats && d.stats[0] && d.stats[0].splits) || [];
+  return splits.map(s => ({
+    gamePk: s.game && s.game.gamePk, date: s.date,
+    opp: (s.opponent && s.opponent.name) || '', isHome: !!s.isHome,
+    league: (s.league && s.league.name) || '', stat: s.stat,
+  })).filter(g => g.gamePk && g.date).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+// Single game / a shift-click range gets the specific "2024 ALDS Game 2 vs. Royals" phrasing;
+// anything selected non-contiguously falls back to the plain count, matching the existing
+// regular-season game log's "N SELECTED GAMES" convention (see scopedSplitLabel's gamelog branch).
+function postseasonGameLogLabel(year, round, games, idxs) {
+  const sorted = [...idxs].sort((a, b) => a - b);
+  const first = games[sorted[0]];
+  const roundName = postseasonRoundDisplayName(round, first.league);
+  const oppNick = nickOf(first.opp).toUpperCase();
+  if (sorted.length === 1) return `${year} ${roundName} GAME ${sorted[0] + 1} VS. ${oppNick}`;
+  const isContiguous = sorted.every((v, i) => i === 0 || v === sorted[i - 1] + 1);
+  if (isContiguous) return `${year} ${roundName} GAMES ${sorted[0] + 1}-${sorted[sorted.length - 1] + 1} VS. ${oppNick}`;
+  return `${sorted.length} SELECTED GAMES`;
+}
+
+// Same cell shape as buildPostseasonGraphicData above, just summed over the selected individual
+// games instead of the whole round.
+function buildPostseasonGameLogGraphicData(row, games, idxs, year, round) {
+  const group = wantsPitching(row) && !wantsBatting(row) ? 'pitching' : 'hitting';
+  const stats = idxs.map(i => games[i] && games[i].stat).filter(Boolean);
+  if (!stats.length) return null;
+  const combined = aggregateFor(group, stats);
+  if (!combined) return null;
+  const label = postseasonGameLogLabel(year, round, games, idxs);
+  if (group === 'pitching') {
+    const shortSpan = isShortPitchingSpan(combined);
+    return { label, splitLabel: label, cells: [
+      ['IP', combined.inningsPitched], ['ERA', combined.era], ['WHIP', combined.whip],
+      ['W-L', `${combined.wins}-${combined.losses}`],
+      ...(shortSpan
+        ? [['K', combined.strikeOuts], ['BB', combined.baseOnBalls]]
+        : [['K%', kPct(combined.strikeOuts, combined.battersFaced)],
+           ['BB%', bbPct(combined.baseOnBalls, combined.battersFaced)]]) ] };
+  }
+  return { label, splitLabel: label, hitLine: `${combined.hits}-for-${combined.atBats}`, cells: [
+    ['AVG', combined.avg], ['OBP', combined.obp], ['SLG', combined.slg], ['OPS', combined.ops],
+    ['K%', kPct(combined.strikeOuts, combined.plateAppearances)],
+    ['BB%', bbPct(combined.baseOnBalls, combined.plateAppearances)],
+    ['HR', combined.homeRuns], ['RBI', combined.rbi] ] };
+}
+
+function renderPostseasonGameLogSelection() {
+  $('postseasonGameLogList').querySelectorAll('.modal-gamelog-row').forEach(r => {
+    r.classList.toggle('active', modalSelectedPostseasonGameIndices.has(+r.dataset.idx));
+  });
+  const btn = $('postseasonGameLogApply');
+  btn.disabled = !modalSelectedPostseasonGameIndices.size;
+  btn.textContent = modalSelectedPostseasonGameIndices.size > 1 ? `Apply (${modalSelectedPostseasonGameIndices.size})` : 'Apply';
+}
+
+// Shows/hides and (re)loads the individual-game list below the round/year pickers — only ever
+// meaningful once the selection resolves to exactly one year + one specific round (a single
+// opponent, guaranteed); any other combination hides and clears it, mirroring how the regular
+// game log section clears on reload. Reads modalPid/modalRow directly (like the round/year pill
+// handlers already do) rather than taking params, since it's called from several different click
+// handlers that don't otherwise carry that context.
+function updatePostseasonGameLog() {
+  const row = $('postseasonGameLogRow');
+  if (!row) return;
+  const single = !modalPostseasonAllYears && modalSelectedPostseasonYears.size === 1 && modalPostseasonRound !== 'all';
+  if (!single) {
+    row.hidden = true;
+    modalPostseasonGames = []; modalSelectedPostseasonGameIndices = new Set(); modalLastClickedPostseasonGameIndex = null;
+    return;
+  }
+  const pid = modalPid, r = modalRow;
+  const year = +[...modalSelectedPostseasonYears][0];
+  const round = modalPostseasonRound;
+  const group = wantsPitching(r) && !wantsBatting(r) ? 'pitching' : 'hitting';
+  row.hidden = false;
+  modalSelectedPostseasonGameIndices = new Set(); modalLastClickedPostseasonGameIndex = null;
+  $('postseasonGameLogApply').disabled = true; $('postseasonGameLogApply').textContent = 'Apply';
+  $('postseasonGameLogList').innerHTML = '<div class="modal-empty" style="padding:12px">Loading…</div>';
+  const mySeq = ++postseasonGameLogSeq;
+  loadPostseasonGameLog(pid, group, year, round).then(games => {
+    if (mySeq !== postseasonGameLogSeq || modalPid !== pid) return;
+    modalPostseasonGames = games;
+    if (!games.length) {
+      $('postseasonGameLogList').innerHTML = '<div class="modal-empty" style="padding:12px">No games found.</div>';
+      return;
+    }
+    // Opportunistically fill in the opponent/league for the round-aggregate label too, now that
+    // the single-game log for this exact year+round has loaded — same data, no extra request.
+    const metaByYear = modalPostseasonMeta[group];
+    if (metaByYear) {
+      if (!metaByYear.has(year)) metaByYear.set(year, new Map());
+      const existing = metaByYear.get(year).get(round) || {};
+      metaByYear.get(year).set(round, { league: existing.league || games[0].league || '', opp: games[0].opp || '' });
+    }
+    $('postseasonGameLogList').innerHTML = games.map((g, i) =>
+      `<div class="modal-gamelog-row" data-idx="${i}">
+        <span class="modal-gamelog-date">${gameLogDateStr(g.date)}</span>
+        <span class="modal-gamelog-opp">${g.isHome ? 'vs' : '@'} ${nickOf(g.opp)}</span>
+        <span class="modal-gamelog-line">${gameLogStatLine(g.stat, group === 'pitching')}</span>
+      </div>`).join('');
+  });
 }
 
 // ---- At Yankee Stadium (Yankees players only) ----------------------------------------------
@@ -2681,9 +2915,15 @@ function wireModalExtras() {
   // modal open. Wired for both player and Team Total, same as Months/Notable Rankings above:
   // round and year selection are both pure filters over that same cache.
   modalPostseasonYears = {};
+  modalPostseasonMeta = {};
   modalSelectedPostseasonYears = new Set();
   modalPostseasonAllYears = false;
   modalPostseasonRound = 'all';
+  modalPostseasonGames = [];
+  modalSelectedPostseasonGameIndices = new Set();
+  modalLastClickedPostseasonGameIndex = null;
+  if ($('postseasonGameLogRow')) $('postseasonGameLogRow').hidden = true;
+  if ($('postseasonGameLogList')) $('postseasonGameLogList').innerHTML = '';
   const roundRow = $('postseasonRoundRow');
   roundRow.querySelectorAll('.tf-pill').forEach(b => b.classList.toggle('on', b.dataset.round === 'all'));
   roundRow.onclick = e => {
@@ -2691,18 +2931,45 @@ function wireModalExtras() {
     if (!b) return;
     modalPostseasonRound = b.dataset.round;
     roundRow.querySelectorAll('.tf-pill').forEach(x => x.classList.toggle('on', x === b));
+    updatePostseasonGameLog();
+  };
+  // Individual-game list below the round/year pickers — its markup lives permanently in the DOM
+  // (see index.html's #postseasonGameLogRow), so it's wired once per modal open just like the
+  // regular-season game log's own list/apply wiring above.
+  $('postseasonGameLogList').onclick = e => {
+    const rowEl = e.target.closest('.modal-gamelog-row'); if (!rowEl) return;
+    const idx = +rowEl.dataset.idx;
+    if (e.shiftKey && modalLastClickedPostseasonGameIndex !== null) {
+      const [lo, hi] = [modalLastClickedPostseasonGameIndex, idx].sort((a, b) => a - b);
+      for (let i = lo; i <= hi; i++) modalSelectedPostseasonGameIndices.add(i);
+    } else {
+      if (modalSelectedPostseasonGameIndices.has(idx)) modalSelectedPostseasonGameIndices.delete(idx);
+      else modalSelectedPostseasonGameIndices.add(idx);
+      modalLastClickedPostseasonGameIndex = idx;
+    }
+    renderPostseasonGameLogSelection();
+  };
+  $('postseasonGameLogApply').onclick = () => {
+    if (!modalSelectedPostseasonGameIndices.size) return;
+    const year = +[...modalSelectedPostseasonYears][0];
+    const round = modalPostseasonRound;
+    const idxs = [...modalSelectedPostseasonGameIndices];
+    const data = buildPostseasonGameLogGraphicData(modalRow, modalPostseasonGames, idxs, year, round);
+    if (!data) { $('modalDlNote').textContent = 'No postseason stats for that selection.'; return; }
+    pushCustomGraphic(data, wantsPitching(modalRow) && !wantsBatting(modalRow) ? 'pit' : 'bat');
   };
   const yearsRow = $('postseasonYearsRow');
   yearsRow.innerHTML = '<span class="modal-empty">Loading postseason history…</span>';
   (async () => {
     const pid = modalPid, r = modalRow;
     const groups = [wantsBatting(r) && 'hitting', wantsPitching(r) && 'pitching'].filter(Boolean);
-    const data = await loadPostseasonYears(pid, groups).catch(() => ({}));
+    const data = await loadPostseasonYears(pid, groups).catch(() => ({ years: {}, meta: {} }));
     if (modalPid !== pid) return;
-    modalPostseasonYears = data;
+    modalPostseasonYears = data.years;
+    modalPostseasonMeta = data.meta;
     const years = [...new Set([
-      ...(data.hitting ? [...data.hitting.keys()] : []),
-      ...(data.pitching ? [...data.pitching.keys()] : []),
+      ...(data.years.hitting ? [...data.years.hitting.keys()] : []),
+      ...(data.years.pitching ? [...data.years.pitching.keys()] : []),
     ])].sort((a, b) => b - a);
     if (!years.length) {
       yearsRow.innerHTML = '<span class="modal-empty">No postseason history found.</span>';
@@ -2734,6 +3001,7 @@ function wireModalExtras() {
           else { modalSelectedPostseasonYears.add(y); b.classList.add('on'); }
         }
         syncApply();
+        updatePostseasonGameLog();
       };
     });
     applyBtn.onclick = () => {
@@ -2770,17 +3038,23 @@ function battingGraphicData(st, label, tf) {
 }
 function pitchingGraphicData(st, label) {
   if (!st) return null;
+  const shortSpan = isShortPitchingSpan(st);
   return { label, splitLabel: label, cells: [
     ['IP', st.inningsPitched], ['ERA', st.era], ['WHIP', st.whip], ['W-L', `${st.wins}-${st.losses}`],
-    ['K%', kPct(st.strikeOuts, st.battersFaced)], ['BB%', bbPct(st.baseOnBalls, st.battersFaced)] ] };
+    ...(shortSpan
+      ? [['K', st.strikeOuts], ['BB', st.baseOnBalls]]
+      : [['K%', kPct(st.strikeOuts, st.battersFaced)], ['BB%', bbPct(st.baseOnBalls, st.battersFaced)]]) ] };
 }
 // vs-L/R pitching splits have no ERA/W-L/saves (not a real concept for that split), so swap in
 // what the API actually gives us: IP/WHIP/K%/BB% plus the opposing batting line (BAA/HR)
 function pitchingSplitGraphicData(st, label) {
   if (!st) return null;
+  const shortSpan = isShortPitchingSpan(st);
   return { label, splitLabel: label, hitLine: `${st.hits}-for-${st.atBats} allowed`, cells: [
     ['IP', st.inningsPitched], ['WHIP', st.whip], ['BAA', st.avg],
-    ['K%', kPct(st.strikeOuts, st.battersFaced)], ['BB%', bbPct(st.baseOnBalls, st.battersFaced)],
+    ...(shortSpan
+      ? [['K', st.strikeOuts], ['BB', st.baseOnBalls]]
+      : [['K%', kPct(st.strikeOuts, st.battersFaced)], ['BB%', bbPct(st.baseOnBalls, st.battersFaced)]]),
     ['HR', +st.homeRuns || 0] ] };
 }
 
