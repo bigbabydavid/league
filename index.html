@@ -225,6 +225,24 @@
   table.matchup-table tr.matchup-row.on td{background:#FBEAEA}
   table.matchup-table tr.matchup-row.dim{opacity:.45;cursor:default}
   table.matchup-table tr.matchup-totals td{font-weight:800;background:var(--chrome);border-top:2px solid var(--hard)}
+  /* ---- Win-Loss record block (Team Totals modal only) ---- */
+  .record-box{margin:0 0 14px;padding-bottom:12px;border-bottom:1px solid var(--grid)}
+  .record-box h3{font-family:"Sofia Sans Extra Condensed",sans-serif;font-weight:800;
+    text-transform:uppercase;font-size:12px;letter-spacing:1.5px;color:var(--accent);margin:0 0 8px}
+  .rec-row{display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+  .rec-main{font-family:"Anton",sans-serif;font-size:34px;line-height:1;letter-spacing:.5px;
+    background:var(--accent);color:#fff;border:1px solid var(--accent);border-radius:6px;
+    padding:10px 18px;cursor:pointer}
+  .rec-main:hover{background:var(--accent-hover);border-color:var(--accent-hover);color:#fff}
+  .rec-sub{display:flex;gap:18px;flex-wrap:wrap;color:var(--dim);
+    font-family:"Sofia Sans Extra Condensed",sans-serif;font-weight:700;
+    text-transform:uppercase;font-size:12px;letter-spacing:.5px}
+  .rec-sub b{display:block;font-size:19px;color:var(--ink);letter-spacing:0}
+  .rec-tile{background:#fff;border:1px solid var(--grid);border-radius:6px;padding:6px 12px;
+    color:var(--dim);font-family:"Sofia Sans Extra Condensed",sans-serif;font-weight:700;
+    text-transform:uppercase;font-size:12px;letter-spacing:.5px;cursor:pointer;text-align:center}
+  .rec-tile:hover{border-color:var(--accent);color:var(--accent)}
+  .rec-tile:hover b{color:var(--accent)}
   .modal-line{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:15px;
     color:var(--ink);margin-bottom:10px;font-weight:800}
   .modal-hitline{font-family:"Sofia Sans Extra Condensed",sans-serif;font-weight:700;
@@ -454,6 +472,7 @@
       </div>
       <div class="scope-row" id="matchupResults"></div>
     </div>
+    <div id="recordBox" class="record-box" hidden></div>
     <div class="modal-section" id="teamMatchupBox" hidden></div>
     <div id="modalBody" class="modal-body"></div>
     <div class="modal-export-row" id="modalExportRow">
@@ -1374,6 +1393,7 @@ let modalSince = '';            // YYYY-MM-DD, '' when not in use
 let modalRangeFrom = '', modalRangeTo = '';   // explicit start/end range
 let modalLastX = 0;             // last N games
 let modalSeasonList = [];       // every season this player has MLB stats for
+let modalSticky = { kind: null };   // which record-box graphic (if any) stays pinned on air through a recount
 
 // Postseason scope — a year-by-year cache (kept separate from the regular-season one above)
 // broken out by round, so round and year selection are both just filters over the same fetch.
@@ -1809,9 +1829,17 @@ function paintMatchupRosters() {
   // openPlayerModal looks players up in currentIndex, same as every roster/search view —
   // populate it here with both teams so clicking either roster works the normal way.
   currentIndex = new Map();
-  // Bigger text and grouped by position (same POS_BUCKETS used for browsing the whole league)
-  // instead of the compact card grid — this page exists to scan a full roster fast mid-broadcast,
-  // so legibility and clear groupings matter more here than fitting lots of players on screen.
+  // Bigger text and grouped by position (a BvP-specific bucket order/labeling, kept separate
+  // from the shared POS_BUCKETS used for browsing the whole league elsewhere) instead of the
+  // compact card grid — this page exists to scan a full roster fast mid-broadcast, so legibility
+  // and clear groupings matter more here than fitting lots of players on screen. DH/two-way
+  // players sit above Pitching (not after it) and are labeled "DH" rather than the generic "Other".
+  const BVP_POS_BUCKETS = [
+    ['Infield', ['C', '1B', '2B', '3B', 'SS']],
+    ['Outfield', ['LF', 'CF', 'RF', 'OF']],
+    ['DH', ['DH', 'TWP']],
+    ['Pitching', ['P', 'SP', 'RP']],
+  ];
   const wrap = el('div', 'bvp-wrap');
   [matchupTeamA, matchupTeamB].forEach(tid => {
     const team = teamsById.get(tid);
@@ -1819,7 +1847,7 @@ function paintMatchupRosters() {
     const col = el('div', 'bvp-col');
     col.appendChild(el('h3', null, team ? team.name : 'Team'));
     const teamPlayers = allPlayers.filter(p => p.teamId === tid);
-    POS_BUCKETS.forEach(([label, codes]) => {
+    BVP_POS_BUCKETS.forEach(([label, codes]) => {
       const inBucket = teamPlayers.filter(p => codes.includes(p.pos))
         .sort((a, b) => posRank(a.pos) - posRank(b.pos) || a.name.localeCompare(b.name));
       if (!inBucket.length) return;
@@ -2571,7 +2599,9 @@ async function openPlayerModal(pid, matchupOppTeamId) {
   // only set when opened from the BvP Matchup Builder — every other entry point (roster,
   // search, position browsing) opens with this cleared, so the table stays hidden there.
   modalMatchupOppTeamId = matchupOppTeamId || null;
+  modalSticky = { kind: null };
   setModalMode('player');
+  if ($('recordBox')) { $('recordBox').hidden = true; $('recordBox').innerHTML = ''; }   // record box is team-only
   $('modalDlNote').textContent = '';
   $('modalHeadshot').src = headshotURL(pid);
   $('modalName').textContent = row.name;
@@ -2615,6 +2645,245 @@ async function openPlayerModal(pid, matchupOppTeamId) {
 }
 
 // =====================================================================================
+// Win-Loss record over an arbitrary span (Team Totals modal only). The standings endpoint
+// only reports a club's record as of today, so any other window has to be tallied from the
+// schedule game by game — which also gives home/road and run differential for free.
+// =====================================================================================
+
+// Turns whatever the modal's scope selectors currently say into concrete date windows.
+// Mirrors the precedence the stat fetchers use: explicit range > since-date > months > seasons.
+async function currentScopeRanges() {
+  const today = new Date().toISOString().slice(0, 10);
+  const years = modalSeasons.size ? [...modalSeasons].sort() : [String($('season').value)];
+  const clampYear = y => ({ start: `${y}-01-01`, end: (`${y}-12-31` > today ? today : `${y}-12-31`) });
+
+  if (isRangeTf(modalTf)) { const [, from, to] = modalTf.split(':'); return [{ start: from, end: to }]; }
+  if (modalSince) return [{ start: modalSince, end: today }];
+  // "Last N games" is a game count, not a date window — resolved separately in fetchTeamRecord.
+  if (isLastXTf(modalTf)) return years.map(clampYear);
+  // rolling windows and the second half are genuine date ranges, so the record follows them
+  if (['l7', 'l14', 'l30', 'month'].includes(modalTf)) {
+    const { startDate, endDate } = dateRangeFor(modalTf);
+    return [{ start: startDate, end: endDate }];
+  }
+  if (modalTf === '2h') {
+    const out = [];
+    for (const y of years) {
+      const start = await getSecondHalfStart(y);
+      if (start) out.push({ start, end: (+y === +String(today).slice(0, 4)) ? today : `${y}-12-31` });
+    }
+    return out.length ? out : years.map(clampYear);
+  }
+  if (modalSelectedMonths.size) {
+    const out = [];
+    years.forEach(y => [...modalSelectedMonths].sort((a, b) => a - b).forEach(m => out.push(recordMonthBounds(y, m))));
+    return out;
+  }
+  return years.map(clampYear);
+}
+
+// First/last calendar day of a given year+month, clamped so an in-progress month doesn't reach
+// into the future. (Months are normally scoped via MLB's own byMonth split elsewhere in this file;
+// the record box needs real game-level date windows, so it gets this small helper of its own.)
+function recordMonthBounds(year, month) {
+  const today = new Date().toISOString().slice(0, 10);
+  const mm = String(month).padStart(2, '0');
+  const lastDay = new Date(Date.UTC(+year, +month, 0)).getUTCDate();
+  const end = `${year}-${mm}-${String(lastDay).padStart(2, '0')}`;
+  return { start: `${year}-${mm}-01`, end: end > today ? today : end };
+}
+
+// Regular season only — spring training and postseason would distort a "record" figure.
+async function fetchTeamRecord(teamId, ranges, opts) {
+  const o = opts || {};
+  // Collect games first so "last N" can be taken off the end and venue filtering is one place.
+  const games = [];
+  await Promise.all(ranges.map(async rg => {
+    const url = `${API}/schedule?sportId=1&teamId=${teamId}&startDate=${rg.start}&endDate=${rg.end}&gameType=R`;
+    const d = await jc(url).catch(() => null);
+    ((d && d.dates) || []).forEach(day => (day.games || []).forEach(g => {
+      const st = g.status || {};
+      if (st.abstractGameState !== 'Final' && st.codedGameState !== 'F') return;   // skip unplayed
+      const home = g.teams && g.teams.home, away = g.teams && g.teams.away;
+      if (!home || !away) return;
+      const isHome = home.team && home.team.id === teamId;
+      const me = isHome ? home : away, them = isHome ? away : home;
+      if (me.score == null || them.score == null) return;
+      games.push({ date: g.gameDate || day.date, isHome, rs: +me.score, ra: +them.score });
+    }));
+  }));
+  games.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  let list = games;
+  if (o.venue === 'home') list = list.filter(g => g.isHome);
+  if (o.venue === 'away') list = list.filter(g => !g.isHome);
+  if (o.lastN) list = list.slice(-o.lastN);
+
+  const tally = { w: 0, l: 0, homeW: 0, homeL: 0, awayW: 0, awayL: 0, rs: 0, ra: 0, games: 0 };
+  list.forEach(g => {
+    const won = g.rs > g.ra;
+    tally.games++; tally.rs += g.rs; tally.ra += g.ra;
+    if (won) { tally.w++; g.isHome ? tally.homeW++ : tally.awayW++; }
+    else { tally.l++; g.isHome ? tally.homeL++ : tally.awayL++; }
+  });
+  return tally;
+}
+
+// Centered single-line graphic: big record, then the span it covers.
+function recordSentenceData(teamName, rec, scopeWords) {
+  // Percentage reads as part of the record itself rather than floating on a second line.
+  const rd = rec.games ? `${rec.w}-${rec.l} (${pctString(rec.w, rec.l)})` : `${rec.w}-${rec.l}`;
+  const asNote = scopeIsDateSpan();
+  return {
+    label: `${rd} ${scopeWords}`.trim(),
+    splitLabel: '',
+    sentenceMode: true,
+    // short spans sit inline ("87-63 (.580) IN 2026"); date windows drop to the small line
+    cells: [[asNote ? '' : scopeWords.toUpperCase(), rd]],
+    rankNote: asNote ? scopeWords.toUpperCase() : '',
+  };
+}
+
+const pctString = (w, l) => (w + l) ? fmt3(w / (w + l)) : '.000';
+
+// Human wording for the active scope, used in the sentence ("IN AUGUST 2026", "SINCE 2026-07-01").
+// "2026-09-02" -> "September 2". Raw ISO dates read like a database query on a broadcast graphic.
+function humanDate(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+  if (!m) return String(iso || '');
+  return `${MONTH_NAMES[+m[2]]} ${+m[3]}`;
+}
+// A window that runs up to today is an open-ended "since", not a closed "from X to Y".
+const endsToday = end => String(end) >= new Date().toISOString().slice(0, 10);
+
+// Month phrasing for the record sentence ("July", "July–September") — distinct from
+// monthsSplitLabel elsewhere in this file, which is uppercased for pill/graphic labels.
+function recordMonthsPhrase(months) {
+  const arr = [...months].map(Number).sort((a, b) => a - b);
+  if (arr.length === 1) return MONTH_NAMES[arr[0]] || `Month ${arr[0]}`;
+  const contiguous = arr.every((m, i) => i === 0 || m === arr[i - 1] + 1);
+  return contiguous ? `${MONTH_NAMES[arr[0]]}–${MONTH_NAMES[arr[arr.length - 1]]}` : arr.map(m => MONTH_NAMES[m]).join(', ');
+}
+
+function recordScopeWords() {
+  if (isRangeTf(modalTf)) {
+    const [, f, t] = modalTf.split(':');
+    return endsToday(t) ? `since ${humanDate(f)}` : `from ${humanDate(f)} to ${humanDate(t)}`;
+  }
+  if (modalSince) return `since ${humanDate(modalSince)}`;
+  if (isLastXTf(modalTf)) return `over their last ${modalTf.split(':')[1]} games`;
+  if (modalTf === 'l7') return 'over the last week';
+  if (modalTf === 'l14') return 'over the last 2 weeks';
+  if (modalTf === 'l30') return 'over the last 30 days';
+  if (modalTf === 'month') return 'this month';
+  if (modalTf === '2h') return 'in the second half';
+  if (modalTf === 'home') return 'at home';
+  if (modalTf === 'away') return 'on the road';
+  if (modalTf === 'vl') return 'vs. lefties';
+  if (modalTf === 'vr') return 'vs. righties';
+  const years = [...modalSeasons].sort();
+  const yLabel = years.length <= 1 ? (years[0] || $('season').value)
+    : (years.every((y, i) => i === 0 || +y === +years[i - 1] + 1) ? `${years[0]}–${years[years.length - 1]}` : years.join(', '));
+  if (modalSelectedMonths.size) return `in ${recordMonthsPhrase(modalSelectedMonths)} ${yLabel}`;
+  return `in ${yLabel}`;
+}
+
+// True when the active scope is an explicit date window. Those phrases are long, so they read
+// better as a small line beneath the number than inline beside it.
+const scopeIsDateSpan = () => isRangeTf(modalTf) || !!modalSince || modalSelectedMonths.size > 0;
+
+// Paints the record block and keeps it in step with the scope selectors above it.
+async function paintRecordBox() {
+  const box = $('recordBox');
+  if (!box) return;
+  if (!modalRow || !modalRow.isTeam) { box.hidden = true; box.innerHTML = ''; return; }
+  box.hidden = false;
+  const teamId = modalRow.teamId, scopeAtStart = recordScopeWords();
+  box.innerHTML = `<h3>Win-Loss Record</h3><div class="modal-empty">Counting games …</div>`;
+  const ranges = await currentScopeRanges();
+  const venue = modalTf === 'home' ? 'home' : modalTf === 'away' ? 'away' : null;
+  const lastN = isLastXTf(modalTf) ? +modalTf.split(':')[1] : 0;
+  const rec = await fetchTeamRecord(teamId, ranges, { venue, lastN }).catch(() => null);
+  if (!modalRow || modalRow.teamId !== teamId || recordScopeWords() !== scopeAtStart) return;
+  if (!rec || !rec.games) {
+    box.innerHTML = `<h3>Win-Loss Record</h3><div class="modal-empty">No completed regular-season games in this span.</div>`;
+    return;
+  }
+  const diff = rec.rs - rec.ra;
+  // Every figure here is its own on-air graphic, phrased the way it'd be said out loud.
+  const spanAsNote = scopeIsDateSpan();
+  const subs = [
+    { v: pctString(rec.w, rec.l), k: 'PCT', qual: 'win percentage' },
+    { v: `${rec.homeW}-${rec.homeL}`, k: 'HOME', qual: 'at home' },
+    { v: `${rec.awayW}-${rec.awayL}`, k: 'ROAD', qual: 'on the road' },
+    { v: `${diff > 0 ? '+' : ''}${diff}`, k: 'RUN DIFF', qual: 'run differential' },
+  ].map(x => ({ ...x, words: `${x.qual} ${scopeAtStart}`.trim() }));
+  box.innerHTML = `<h3>Win-Loss Record · ${scopeAtStart}</h3>` +
+    `<div class="rec-row">` +
+      `<button type="button" class="rec-main" id="recPush">${rec.w}-${rec.l}</button>` +
+      `<div class="rec-sub">` +
+        subs.map((x, i) => `<button type="button" class="rec-tile" data-i="${i}"><b>${x.v}</b>${x.k}</button>`).join('') +
+      `</div>` +
+    `</div>` +
+    `<div class="modal-empty" style="margin-top:6px">Click any figure to put it on air. Change the season, months, split or date range above and it recounts.</div>`;
+
+  const push = data => {
+    pushOnAir(modalPid, 'bat', modalRow, data);
+    $('modalDlNote').textContent = `On air: ${data.label}`;
+  };
+  const tileData = x => ({
+    label: `${x.v} ${x.words}`, splitLabel: '', sentenceMode: true,
+    cells: [[(spanAsNote ? x.qual : x.words).toUpperCase(), x.v]],
+    rankNote: spanAsNote ? scopeAtStart.toUpperCase() : '',
+  });
+  $('recPush').onclick = () => { modalSticky = { kind: 'record' }; push(recordSentenceData(modalRow.name, rec, scopeAtStart)); };
+  box.querySelectorAll('.rec-tile').forEach(btn => {
+    btn.onclick = () => {
+      const x = subs[+btn.dataset.i];
+      modalSticky = { kind: 'recordTile', key: x.k };
+      push(tileData(x));
+    };
+  });
+
+  // Recount finished — if a record graphic is what's on air, refresh it for this scope.
+  if (modalSticky.kind === 'record') push(recordSentenceData(modalRow.name, rec, scopeAtStart));
+  else if (modalSticky.kind === 'recordTile') {
+    const x = subs.find(y => y.k === modalSticky.key);
+    if (x) push(tileData(x));
+  }
+}
+
+// Quick, unscoped record pull from the standings cache (today's actual record), independent of
+// the recountable box above — mirrors the reference tool's own "RECORD" timeframe pill for teams.
+async function buildTeamRecordData(team) {
+  const year = $('season').value;
+  const byDiv = await loadStandings(year);
+  if (!byDiv) return null;
+  let row = null, rows = null, divId = null;
+  for (const [id, list] of byDiv.entries()) {
+    const hit = list.find(r => r.id === team.id);
+    if (hit) { row = hit; rows = list; divId = id; break; }
+  }
+  if (!row) return null;
+  const dv = divisions.find(d => d.id === divId);
+  // standings rows here carry no rank field — derive placement by sorting the division on pct
+  const ranked = [...rows].sort((a, b) => (+b.pct || 0) - (+a.pct || 0));
+  const place = ranked.findIndex(r => r.id === team.id) + 1;
+  const gbRaw = String(row.gb == null ? '-' : row.gb);
+  const isLeader = gbRaw === '-' || gbRaw === '' || gbRaw === '0';
+  const cells = [
+    ['RECORD', `${row.w}-${row.l}`],
+    ['PCT', row.pct],
+    ['IN ' + (dv ? dv.short : 'DIVISION'), place ? ordinal(place) : '—'],
+    // a division leader has no games back — show the lead label instead of a meaningless dash
+    [isLeader ? 'DIVISION' : 'GAMES BACK', isLeader ? 'LEADER' : gbRaw],
+  ];
+  const label = `${year} RECORD`;
+  return { label, splitLabel: label,
+           hitLine: `${row.w}-${row.l} · ${place ? ordinal(place) : ''} ${dv ? dv.short : ''}`.trim(),
+           cells };
+}
+
+// =====================================================================================
 // Team Totals — the whole-roster aggregate modal ported from the reference tool's
 // openTeamTotalModal/TEAM_SPLITS, wired to Trade Snapshot's own data layer. A synthetic
 // "team:<id>" pid (see statsBase/isTeamPid above) routes every existing fetch helper to
@@ -2633,6 +2902,7 @@ async function openTeamTotalsModal(team) {
   modalSeasonList = [];
   modalSelectedMonths = new Set(); modalMonthsAvail = [];
   modalMatchupOppTeamId = null;
+  modalSticky = { kind: 'record' };   // clubs lead with their record, not a batting line
   setModalMode('team');
   $('teamMatchupBox').hidden = true; $('teamMatchupBox').innerHTML = '';   // BvP table is player-only
   $('modalDlNote').textContent = '';
@@ -2646,6 +2916,7 @@ async function openTeamTotalsModal(team) {
   paintMonthsPicker();
   paintTfPills();
   wireModalExtras();
+  paintRecordBox();
   await loadModalStats();
   const list = await fetchSeasonList(pid, ['hitting', 'pitching']);
   if (modalPid !== pid) return;
@@ -2671,10 +2942,26 @@ function paintTfPills() {
   TF.forEach(([key, label]) => { if (isTeam && key === 'career') return; add(key, label); });
   if (!isTeam) CAREER_SPLITS.forEach(([key, label]) => add(key, label));
   if (showsYankeeStadium(modalRow)) add('yankstad', 'AT YANKEE STADIUM');
+  if (isTeam) {
+    const rec = el('button', 'tf-pill', 'RECORD');
+    rec.type = 'button';
+    rec.onclick = async () => {
+      const team = teamsById.get(modalRow.teamId);
+      if (!team) return;
+      $('modalDlNote').textContent = 'Loading record…';
+      const data = await buildTeamRecordData(team).catch(() => null);
+      if (!data) { $('modalDlNote').textContent = 'No standings available for this season.'; return; }
+      pushOnAir(modalPid, 'bat', modalRow, data);
+      $('modalDlNote').textContent = `On air: ${data.label}`;
+    };
+    box.appendChild(rec);
+  }
 }
 
 async function loadModalStats() {
   const pid = modalPid, row = modalRow, tf = modalTf, scopeAtStart = scopeLabel();
+  // the record block reads the same scope selectors, so keep it in step with every stat reload
+  if (row && row.isTeam) paintRecordBox();
   $('modalBody').innerHTML = `<div class="modal-empty">Loading ${scopeAtStart}…</div>`;
   const doBat = wantsBatting(row), doPit = wantsPitching(row);
   // Career totals ride along with every other split so their tiles are always one click away,
