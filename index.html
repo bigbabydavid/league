@@ -424,6 +424,11 @@
         <div class="modal-sub" id="modalSub"></div>
       </div>
     </div>
+    <div class="tf-pills" id="modalTabs" hidden>
+      <button type="button" class="tf-pill on" data-tab="stats">Stats</button>
+      <button type="button" class="tf-pill" data-tab="contract">Contract</button>
+    </div>
+    <div id="statsPane">
     <div class="scope-block" id="seasonPicker"></div>
     <div class="scope-block" id="monthsBlock">
       <div class="modal-hitline">Months — check any to combine</div>
@@ -475,6 +480,8 @@
     <div id="recordBox" class="record-box" hidden></div>
     <div class="modal-section" id="teamMatchupBox" hidden></div>
     <div id="modalBody" class="modal-body"></div>
+    </div>
+    <div id="contractPane" class="record-box" hidden></div>
     <div class="modal-export-row" id="modalExportRow">
       <button id="modalDownloadBat" class="modal-export-btn" type="button" hidden
         title="Push to OBS and download hitting lower-third PNG">⤓ Download Hitting PNG</button>
@@ -2600,6 +2607,9 @@ async function openPlayerModal(pid, matchupOppTeamId) {
   // search, position browsing) opens with this cleared, so the table stays hidden there.
   modalMatchupOppTeamId = matchupOppTeamId || null;
   modalSticky = { kind: null };
+  contractSeasons = new Set();
+  $('modalTabs').hidden = false;   // players get a Stats | Contract tab strip
+  setModalTab('stats');
   setModalMode('player');
   if ($('recordBox')) { $('recordBox').hidden = true; $('recordBox').innerHTML = ''; }   // record box is team-only
   $('modalDlNote').textContent = '';
@@ -2642,6 +2652,165 @@ async function openPlayerModal(pid, matchupOppTeamId) {
     `<option value="${y}"${y === String($('season').value) ? ' selected' : ''}>${y}</option>`).join('');
   $('modalGameLogSeason').onchange = () => loadGameLogForSeason(pid, gameLogGroup, +$('modalGameLogSeason').value);
   loadGameLogForSeason(pid, gameLogGroup, +$('season').value);
+}
+
+// =====================================================================================
+// Contract tab — MLB's Stats API carries no contract data, so contracts come from contracts.json
+// next to this page (keyed by MLB player id). Shape of one entry under "players":
+//   { name, total, years, start, end, aav?, seasons?: { "2026": 40000000, ... }, summary?, note? }
+// aav defaults to total/years; seasons defaults to a flat aav across start..end.
+// =====================================================================================
+let modalTab = 'stats';
+let contractsData = null;      // only cached on a successful load, so a failed load retries
+let contractSeasons = new Set();
+
+async function loadContracts() {
+  if (contractsData) return contractsData;
+  const r = await fetch('contracts.json?ts=' + Date.now(), { cache: 'no-store' });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  contractsData = await r.json();
+  return contractsData;
+}
+
+function fmtMoney(n) {
+  n = +n;
+  if (!isFinite(n)) return '\u2014';
+  const trim = x => String(Math.round(x * 100) / 100);
+  if (Math.abs(n) >= 1e9) return `$${trim(n / 1e9)}B`;
+  if (Math.abs(n) >= 1e6) return `$${trim(n / 1e6)}M`;
+  if (Math.abs(n) >= 1e3) return `$${trim(n / 1e3)}K`;
+  return `$${n}`;
+}
+const spanLabel = ys => {
+  const s = [...ys].map(Number).sort((a, b) => a - b);
+  if (!s.length) return '';
+  const run = s.length > 1 && s.length === s[s.length - 1] - s[0] + 1;
+  return s.length === 1 ? String(s[0]) : run ? `${s[0]}\u2013${s[s.length - 1]}` : s.join(', ');
+};
+
+// Normalises one JSON entry into {total, years, aav, start, end, seasons: Map(year -> value), note}.
+function normalizeContract(c) {
+  if (!c) return null;
+  const years = +c.years || (c.start && c.end ? c.end - c.start + 1 : 0);
+  const total = +c.total || 0;
+  const aav = +c.aav || (years && total ? total / years : 0);
+  const seasons = new Map();
+  if (c.seasons && Object.keys(c.seasons).length) {
+    Object.entries(c.seasons).forEach(([y, v]) => seasons.set(String(y), +v));
+  } else if (c.start && c.end && aav) {
+    for (let y = +c.start; y <= +c.end; y++) seasons.set(String(y), aav);
+  }
+  const ys = [...seasons.keys()].map(Number).sort((a, b) => a - b);
+  return { total, years: years || ys.length, aav, seasons, note: c.note || '', summary: c.summary || '',
+           tags: c.tags || {},
+           start: +c.start || ys[0], end: +c.end || ys[ys.length - 1] };
+}
+
+function setModalTab(tab) {
+  modalTab = tab;
+  const isContract = tab === 'contract';
+  $('statsPane').hidden = isContract;
+  $('contractPane').hidden = !isContract;
+  $('modalTabs').querySelectorAll('button[data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
+  if (isContract) paintContractPane();
+}
+$('modalTabs').onclick = e => {
+  const b = e.target.closest('button[data-tab]');
+  if (!b || !modalPid) return;
+  const was = modalTab;
+  setModalTab(b.dataset.tab);
+  // Clicking back to Stats is a request to show stats, so put the current stat line on air.
+  // The Contract tab shows nothing on air until one of its buttons is clicked.
+  if (b.dataset.tab === 'stats' && was === 'contract') autoPushOnAir();
+};
+
+// contracts.json comes from FanGraphs payroll sheets, which key players by FanGraphs id, not MLB id.
+// So: an exact MLB-id entry wins if present, otherwise match by accent/punctuation-insensitive name
+// (via "byName"), using the player's team to tell apart two players who share a name.
+const contractNameKey = n => String(n || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+function findContract(data, row, pid) {
+  const players = data.players || {};
+  if (players[String(pid)] && !players[String(pid)].team) return players[String(pid)];
+  const ids = ((data.byName || {})[contractNameKey(row.name)] || []).filter(id => players[id]);
+  if (!ids.length) return null;
+  const teamHit = ids.find(id => players[id].team && String(row.team || '').includes(players[id].team));
+  if (teamHit) return players[teamHit];
+  // single name match: trust it for a player on a current club (traded/released players keep their old club in the sheet)
+  return ids.length === 1 && row.teamId ? players[ids[0]] : null;
+}
+
+async function paintContractPane() {
+  const box = $('contractPane'), pid = modalPid, row = modalRow;
+  if (!box || !row || row.isTeam) return;
+  box.innerHTML = `<h3>Contract</h3><div class="modal-empty">Loading contract\u2026</div>`;
+  let data;
+  try { data = await loadContracts(); }
+  catch (e) {
+    if (modalPid !== pid) return;
+    box.innerHTML = `<h3>Contract</h3><div class="modal-empty">Couldn't load contracts.json. ` +
+      `Open the app from its hosted address (it can't be read when opened as a local file).</div>`;
+    return;
+  }
+  if (modalPid !== pid) return;
+  const c = normalizeContract(findContract(data, row, pid));
+  if (!c || !c.seasons.size) {
+    box.innerHTML = `<h3>Contract</h3><div class="modal-empty">No contract on file for ${row.name}. ` +
+      `Add them to contracts.json (keyed by MLB player id ${pid}).</div>`;
+    return;
+  }
+  const yrs = [...c.seasons.keys()].sort();
+  if (!contractSeasons.size) {
+    const cur = String($('season').value);
+    contractSeasons = new Set([c.seasons.has(cur) ? cur : yrs[0]]);
+  }
+  const sel = () => [...contractSeasons].filter(y => c.seasons.has(y)).sort();
+  const selAvg = () => { const s = sel(); return s.length ? s.reduce((a, y) => a + c.seasons.get(y), 0) / s.length : 0; };
+  const selTotal = () => sel().reduce((a, y) => a + c.seasons.get(y), 0);
+
+  const paint = () => {
+    const s = sel();
+    // FanGraphs' own contract text (opt-outs, club options, etc.) when we have it; otherwise built from the numbers
+    const headline = c.summary
+      ? `${c.summary} \u00b7 ${fmtMoney(c.aav)} AAV`
+      : `${c.years} yrs \u00b7 ${fmtMoney(c.total)} total \u00b7 ${fmtMoney(c.aav)} AAV` +
+        (c.start && c.end ? ` \u00b7 ${c.start}\u2013${c.end}` : '');
+    const control = Object.entries(c.tags).sort().map(([y, t]) => `${y} ${t}`).join(' \u00b7 ');
+    box.innerHTML = `<h3>Contract</h3>` +
+      `<div class="modal-line">${headline}</div>` +
+      (control ? `<div class="modal-empty" style="margin:4px 0 0">${control}</div>` : '') +
+      (c.note ? `<div class="modal-empty" style="margin:4px 0 8px">${c.note}</div>` : '') +
+      `<div class="scope-row"><button type="button" class="tf-pill" id="cPushTotal">Total value \u00b7 years \u00b7 AAV</button></div>` +
+      `<div class="scope-row"><label>AAV in seasons</label>` +
+        yrs.map(y => `<button type="button" class="tf-pill${contractSeasons.has(y) ? ' on' : ''}" data-cy="${y}" title="${fmtMoney(c.seasons.get(y))}">${y} \u00b7 ${fmtMoney(c.seasons.get(y))}</button>`).join('') +
+      `</div>` +
+      `<div class="scope-row"><button type="button" class="tf-pill" id="cPushAav"${s.length ? '' : ' disabled'}>` +
+        `Push AAV \u00b7 ${spanLabel(s) || 'pick a season'}${s.length ? ` (${fmtMoney(selAvg())})` : ''}</button></div>` +
+      `<div class="modal-empty" style="margin-top:6px">AAV for the seasons picked is the average of those seasons\u2019 values in the contract.</div>`;
+    box.querySelectorAll('button[data-cy]').forEach(b => {
+      b.onclick = () => {
+        const y = b.dataset.cy;
+        if (contractSeasons.has(y)) contractSeasons.delete(y); else contractSeasons.add(y);
+        paint();
+      };
+    });
+    $('cPushTotal').onclick = () => {
+      const data = { label: `${fmtMoney(c.total)} / ${c.years} yrs / ${fmtMoney(c.aav)} AAV`, splitLabel: 'CONTRACT',
+        hitLine: c.start && c.end ? `${c.start}\u2013${c.end}` : '',
+        cells: [['TOTAL', fmtMoney(c.total)], ['YEARS', String(c.years)], ['AAV', fmtMoney(c.aav)]] };
+      pushOnAir(pid, 'bat', row, data);
+      $('modalDlNote').textContent = `On air: ${data.label}`;
+    };
+    $('cPushAav').onclick = () => {
+      const s2 = sel(); if (!s2.length) return;
+      const span = spanLabel(s2);
+      const data = { label: `${span} AAV ${fmtMoney(selAvg())}`, splitLabel: `CONTRACT \u00b7 ${span}`, hitLine: '',
+        cells: s2.length === 1 ? [['AAV', fmtMoney(selAvg())]]
+          : [['AAV', fmtMoney(selAvg())], ['SEASONS', String(s2.length)], ['TOTAL', fmtMoney(selTotal())]] };
+      pushOnAir(pid, 'bat', row, data);
+      $('modalDlNote').textContent = `On air: ${data.label}`;
+    };
+  };
+  paint();
 }
 
 // =====================================================================================
@@ -2903,6 +3072,8 @@ async function openTeamTotalsModal(team) {
   modalSelectedMonths = new Set(); modalMonthsAvail = [];
   modalMatchupOppTeamId = null;
   modalSticky = { kind: 'record' };   // clubs lead with their record, not a batting line
+  $('modalTabs').hidden = true;    // contracts are a player concept
+  setModalTab('stats');
   setModalMode('team');
   $('teamMatchupBox').hidden = true; $('teamMatchupBox').innerHTML = '';   // BvP table is player-only
   $('modalDlNote').textContent = '';
@@ -3640,6 +3811,7 @@ function updateOnAirUI(payload) {
 // (hitting for position players, pitching for pitchers) so the OBS bar always tracks what's on screen.
 function autoPushOnAir() {
   if (!modalPid || !modalRow) return;
+  if (modalTab === 'contract') return;   // don't stomp a contract graphic when a stat load finishes
   const pitFn = isSplitTf(modalTf) ? pitchingSplitGraphicData : pitchingGraphicData;
   if (wantsPitching(modalRow) && !wantsBatting(modalRow)) {
     const data = pitFn(modalPit, scopedSplitLabel(modalTf, 'pitching'));
