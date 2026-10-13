@@ -2739,6 +2739,32 @@ function findContract(data, row, pid) {
   return ids.length === 1 && row.teamId ? players[ids[0]] : null;
 }
 
+// MLBTR's projected 2027 arbitration salaries (data.arb) stand in for a 2027 contract number until the
+// official figure exists. Matched by name only, and only for a player on a current club (teamId set),
+// so a retired player who happens to share a name never inherits a projection.
+function findArbProjection(data, row) {
+  const arb = data.arb;
+  if (!arb || !arb.values || !row.teamId) return null;
+  const v = arb.values[contractNameKey(row.name)];
+  return v ? { year: arb.year, thousands: v, source: arb.source || 'mlbtraderumors.com' } : null;
+}
+const fmtArb = k => k >= 1000 ? `$${(k / 1000).toFixed(1)}M` : `$${k}K`;
+function arbRowHTML(proj) {
+  return `<div class="scope-row"><label>${proj.year}</label>` +
+    `<button type="button" class="tf-pill" id="cPushArb">Push \u00b7 Projected ${fmtArb(proj.thousands)} in arbitration</button></div>` +
+    `<div class="modal-empty" style="margin-top:6px">Projection from ${proj.source} \u2014 swap in the official number once arbitration figures are final.</div>`;
+}
+function wireArbPush(proj, pid, row) {
+  const b = $('cPushArb'); if (!b) return;
+  b.onclick = () => {
+    const v = fmtArb(proj.thousands);
+    const data = { label: `Projected ${v} in arbitration`, splitLabel: '', sentenceMode: true,
+      cells: [['in arbitration', `Projected ${v}`]], rankNote: proj.source };
+    pushOnAir(pid, 'bat', row, data);
+    $('modalDlNote').textContent = `On air: ${data.label}`;
+  };
+}
+
 async function paintContractPane() {
   const box = $('contractPane'), pid = modalPid, row = modalRow;
   if (!box || !row || row.isTeam) return;
@@ -2753,7 +2779,13 @@ async function paintContractPane() {
   }
   if (modalPid !== pid) return;
   const c = normalizeContract(findContract(data, row, pid));
+  const proj = findArbProjection(data, row);
   if (!c || !c.seasons.size) {
+    if (proj) {   // no signed contract on file, but there is an arbitration projection to show
+      box.innerHTML = `<h3>Contract</h3><div class="modal-empty" style="margin-bottom:8px">No guaranteed contract on file for ${row.name}.</div>` + arbRowHTML(proj);
+      wireArbPush(proj, pid, row);
+      return;
+    }
     box.innerHTML = `<h3>Contract</h3><div class="modal-empty">No contract on file for ${row.name}. ` +
       `Add them to contracts.json (keyed by MLB player id ${pid}).</div>`;
     return;
@@ -2785,7 +2817,8 @@ async function paintContractPane() {
       `</div>` +
       `<div class="scope-row"><button type="button" class="tf-pill" id="cPushAav"${s.length ? '' : ' disabled'}>` +
         `Push AAV \u00b7 ${spanLabel(s) || 'pick a season'}${s.length ? ` (${fmtMoney(selAvg())})` : ''}</button></div>` +
-      `<div class="modal-empty" style="margin-top:6px">AAV for the seasons picked is the average of those seasons\u2019 values in the contract.</div>`;
+      `<div class="modal-empty" style="margin-top:6px">AAV for the seasons picked is the average of those seasons\u2019 values in the contract.</div>` +
+      (proj && !c.seasons.has(proj.year) ? arbRowHTML(proj) : '');
     box.querySelectorAll('button[data-cy]').forEach(b => {
       b.onclick = () => {
         const y = b.dataset.cy;
@@ -2793,6 +2826,7 @@ async function paintContractPane() {
         paint();
       };
     });
+    if (proj && !c.seasons.has(proj.year)) wireArbPush(proj, pid, row);
     $('cPushTotal').onclick = () => {
       const data = { label: `${fmtMoney(c.total)} / ${c.years} yrs / ${fmtMoney(c.aav)} AAV`, splitLabel: 'CONTRACT',
         hitLine: c.start && c.end ? `${c.start}\u2013${c.end}` : '',
