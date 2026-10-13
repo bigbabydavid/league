@@ -3753,8 +3753,8 @@ async function renderLowerThird(data, row, pid) {
   const MAX_GAP = 100;
   let gapEach = n > 1 ? (avail - totalContent) / (n - 1) : 0;
   let cellX = startX;
-  if (gapEach > MAX_GAP) {
-    gapEach = MAX_GAP;
+  if (n === 1 || gapEach > MAX_GAP) {   // a lone stat centres in the stats area rather than hugging the left edge
+    gapEach = n === 1 ? 0 : MAX_GAP;
     const groupW = totalContent + gapEach * (n - 1);
     cellX = startX + (avail - groupW) / 2;
   }
@@ -3909,6 +3909,7 @@ function paintOnAirBar(root, payload) {
 
   const cellsEl = q('.lt-cells');
   const LOGO_RESERVE = 90, MIN_GAP = 26;
+  hitEl.style.paddingRight = LOGO_RESERVE + 'px';   // keep the label row centred over the same span as the stats below it
   const availW = Math.max(200, (cellsEl.parentElement.clientWidth || 1300) - LOGO_RESERVE);
 
   // Two situational splits side by side, each its own mini stat block.
@@ -3987,7 +3988,7 @@ function paintOnAirBar(root, payload) {
   const totalContent = cells.reduce((a, c) => a + c.offsetWidth, 0);
   const n = cells.length, MAX_GAP = 100;
   const idealGap = n > 1 ? (availW - totalContent) / (n - 1) : 0;
-  if (idealGap > MAX_GAP) { cellsEl.style.justifyContent = 'center'; cellsEl.style.gap = MAX_GAP + 'px'; }
+  if (n === 1 || idealGap > MAX_GAP) { cellsEl.style.justifyContent = 'center'; cellsEl.style.gap = (n === 1 ? 0 : MAX_GAP) + 'px'; }
   else { cellsEl.style.justifyContent = 'space-between'; cellsEl.style.gap = '0px'; }
 
   bar.classList.add('lt-visible');
