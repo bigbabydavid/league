@@ -1228,6 +1228,13 @@ const bbPct = (bb, denom) => denom ? (bb / denom * 100).toFixed(1) + '%' : '–'
 // For a very short pitching span (2 games or fewer), a rate stat like "50.0% K" is misleading —
 // show the actual count instead. gamesPlayed==0/missing is treated as "unknown sample," which
 // keeps the existing rate-stat behavior rather than guessing.
+// Same wording as the series page: batters read "109 games (400 PA)", pitchers just "28 games".
+// Applied once a sample is over 5 games; at 5 or fewer the raw line (H-for-AB) says more.
+const volumeLine = (st, isPit) => {
+  const g = +st.gamesPlayed || 0;
+  if (g <= 5) return '';
+  return isPit || st.plateAppearances == null ? `${g} games` : `${g} games (${st.plateAppearances} PA)`;
+};
 const isShortPitchingSpan = st => { const gp = +st.gamesPlayed || 0; return gp > 0 && gp <= 2; };
 
 // Clicking a stat should put a plain-English sentence on screen ("9 HOME RUNS THIS SEASON"), so
@@ -2310,7 +2317,7 @@ function buildPostseasonGraphicData(row, years, allYears, round) {
   const label = postseasonLabel(yrs, allYears, round, { leagues, oneOpp });
   if (group === 'pitching') {
     const shortSpan = isShortPitchingSpan(combined);
-    return { label, splitLabel: label, cells: [
+    return { label, splitLabel: label, hitLine: volumeLine(combined, true), cells: [
       ['IP', combined.inningsPitched], ['ERA', combined.era], ['WHIP', combined.whip],
       ['W-L', `${combined.wins}-${combined.losses}`],
       ...(shortSpan
@@ -2318,7 +2325,7 @@ function buildPostseasonGraphicData(row, years, allYears, round) {
         : [['K%', kPct(combined.strikeOuts, combined.battersFaced)],
            ['BB%', bbPct(combined.baseOnBalls, combined.battersFaced)]]) ] };
   }
-  return { label, splitLabel: label, hitLine: `${combined.hits}-for-${combined.atBats}`, cells: [
+  return { label, splitLabel: label, hitLine: volumeLine(combined, false) || `${combined.hits}-for-${combined.atBats}`, cells: [
     ['AVG', combined.avg], ['OBP', combined.obp], ['SLG', combined.slg], ['OPS', combined.ops],
     ['K%', kPct(combined.strikeOuts, combined.plateAppearances)],
     ['BB%', bbPct(combined.baseOnBalls, combined.plateAppearances)],
@@ -2366,7 +2373,7 @@ function buildPostseasonGameLogGraphicData(row, games, idxs, year, round) {
   const label = postseasonGameLogLabel(year, round, games, idxs);
   if (group === 'pitching') {
     const shortSpan = isShortPitchingSpan(combined);
-    return { label, splitLabel: label, cells: [
+    return { label, splitLabel: label, hitLine: volumeLine(combined, true), cells: [
       ['IP', combined.inningsPitched], ['ERA', combined.era], ['WHIP', combined.whip],
       ['W-L', `${combined.wins}-${combined.losses}`],
       ...(shortSpan
@@ -2374,7 +2381,7 @@ function buildPostseasonGameLogGraphicData(row, games, idxs, year, round) {
         : [['K%', kPct(combined.strikeOuts, combined.battersFaced)],
            ['BB%', bbPct(combined.baseOnBalls, combined.battersFaced)]]) ] };
   }
-  return { label, splitLabel: label, hitLine: `${combined.hits}-for-${combined.atBats}`, cells: [
+  return { label, splitLabel: label, hitLine: volumeLine(combined, false) || `${combined.hits}-for-${combined.atBats}`, cells: [
     ['AVG', combined.avg], ['OBP', combined.obp], ['SLG', combined.slg], ['OPS', combined.ops],
     ['K%', kPct(combined.strikeOuts, combined.plateAppearances)],
     ['BB%', bbPct(combined.baseOnBalls, combined.plateAppearances)],
@@ -3284,10 +3291,10 @@ function wireModalExtras() {
           const st = t.stat;
           const gp = st.gamesPlayed != null ? st.gamesPlayed : null;
           const data = group === 'pitching'
-            ? { label, splitLabel: label, cells: [['IP', st.inningsPitched], ['ERA', st.era], ['WHIP', st.whip],
+            ? { label, splitLabel: label, hitLine: volumeLine(st, true), cells: [['IP', st.inningsPitched], ['ERA', st.era], ['WHIP', st.whip],
                 ['K', st.strikeOuts], ['BB', st.baseOnBalls], ['W-L', `${st.wins}-${st.losses}`]] }
             : { label, splitLabel: label,
-                hitLine: gp != null ? `${gp} games (${st.hits}-for-${st.atBats})` : `${st.hits}-for-${st.atBats}`,
+                hitLine: volumeLine(st, false) || (gp != null ? `${gp} games (${st.hits}-for-${st.atBats})` : `${st.hits}-for-${st.atBats}`),
                 cells: [
                 ['AVG', st.avg], ['OBP', st.obp], ['SLG', st.slg], ['OPS', st.ops],
                 ['HR', st.homeRuns], ['RBI', st.rbi]] };
@@ -3526,12 +3533,12 @@ function battingGraphicData(st, label, tf) {
   const cells = [['AVG', st.avg], ['OBP', st.obp], ['SLG', st.slg], ['OPS', st.ops],
     ['K%', kPct(st.strikeOuts, st.plateAppearances)], ['BB%', bbPct(st.baseOnBalls, st.plateAppearances)],
     ...extra];
-  return { label, splitLabel: label, hitLine: `${st.hits}-for-${st.atBats}`, cells };
+  return { label, splitLabel: label, hitLine: volumeLine(st, false) || `${st.hits}-for-${st.atBats}`, cells };
 }
 function pitchingGraphicData(st, label) {
   if (!st) return null;
   const shortSpan = isShortPitchingSpan(st);
-  return { label, splitLabel: label, cells: [
+  return { label, splitLabel: label, hitLine: volumeLine(st, true), cells: [
     ['IP', st.inningsPitched], ['ERA', st.era], ['WHIP', st.whip], ['W-L', `${st.wins}-${st.losses}`],
     ...(shortSpan
       ? [['K', st.strikeOuts], ['BB', st.baseOnBalls]]
@@ -3542,7 +3549,7 @@ function pitchingGraphicData(st, label) {
 function pitchingSplitGraphicData(st, label) {
   if (!st) return null;
   const shortSpan = isShortPitchingSpan(st);
-  return { label, splitLabel: label, hitLine: `${st.hits}-for-${st.atBats} allowed`, cells: [
+  return { label, splitLabel: label, hitLine: volumeLine(st, true) || `${st.hits}-for-${st.atBats} allowed`, cells: [
     ['IP', st.inningsPitched], ['WHIP', st.whip], ['BAA', st.avg],
     ...(shortSpan
       ? [['K', st.strikeOuts], ['BB', st.baseOnBalls]]
